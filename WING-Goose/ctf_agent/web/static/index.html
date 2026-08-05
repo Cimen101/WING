@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>CTF-Agent WebUI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #0f1419; color: #e6e6e6; padding: 20px;
+    }
+    h1 { color: #58a6ff; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1400px; margin: 0 auto; }
+    .panel {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 16px; margin-bottom: 16px;
+    }
+    .panel h2 { color: #58a6ff; font-size: 16px; margin-bottom: 12px; }
+    input, textarea, button {
+      font-family: inherit; font-size: 14px; padding: 8px;
+      background: #0d1117; color: #e6e6e6; border: 1px solid #30363d; border-radius: 4px;
+    }
+    input[type="text"], textarea { width: 100%; }
+    textarea { min-height: 80px; resize: vertical; font-family: "Cascadia Code", Consolas, monospace; }
+    button {
+      background: #238636; border-color: #238636; cursor: pointer; padding: 8px 16px;
+    }
+    button:hover { background: #2ea043; }
+    button.secondary { background: #30363d; border-color: #30363d; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .form-row { margin-bottom: 8px; }
+    .form-row label { display: block; color: #8b949e; font-size: 12px; margin-bottom: 4px; }
+    .step {
+      background: #0d1117; border-left: 3px solid #58a6ff; padding: 8px 12px;
+      margin-bottom: 8px; border-radius: 4px; font-family: monospace; font-size: 13px;
+    }
+    .step.final { border-left-color: #3fb950; }
+    .step.error { border-left-color: #f85149; }
+    .step .thought { color: #d29922; margin-bottom: 4px; }
+    .step .action { color: #58a6ff; }
+    .step .observation { color: #8b949e; margin-top: 4px; white-space: pre-wrap; }
+    .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; display: inline-block; }
+    .status.pending { background: #30363d; color: #8b949e; }
+    .status.running { background: #1f6feb; color: #fff; }
+    .status.success { background: #238636; color: #fff; }
+    .status.failed { background: #f85149; color: #fff; }
+    #steps { max-height: 600px; overflow-y: auto; }
+    .intervention { display: flex; gap: 8px; }
+    .intervention input { flex: 1; }
+    .metrics { display: flex; gap: 16px; font-size: 13px; color: #8b949e; }
+    .metrics span { color: #e6e6e6; }
+  </style>
+</head>
+<body>
+  <h1>CTF-Agent WebUI</h1>
+
+  <div class="grid">
+    <!-- 左侧：任务提交 + 干预 -->
+    <div>
+      <div class="panel">
+        <h2>提交任务</h2>
+        <div class="form-row">
+          <label>题目描述</label>
+          <textarea id="desc" placeholder="如：PicoCTF GET aHEAD，HTTP 方法相关"></textarea>
+        </div>
+        <div class="form-row">
+          <label>目标（IP/URL）</label>
+          <input type="text" id="target" placeholder="http://ctf.example.com">
+        </div>
+        <div class="form-row">
+          <label>附件路径</label>
+          <input type="text" id="file" placeholder="C:\path\to\challenge.elf">
+        </div>
+        <div class="form-row">
+          <label>最大步数</label>
+          <input type="text" id="max_steps" value="35" style="width: 100px">
+          <label style="margin-left: 16px; display: inline-block;">
+            <input type="checkbox" id="enable_l3"> 启用 L3 MCP 工具
+          </label>
+        </div>
+        <button onclick="submitTask()">提交任务</button>
+      </div>
+
+      <div class="panel">
+        <h2>对话纠偏</h2>
+        <p style="color: #8b949e; font-size: 12px; margin-bottom: 8px;">
+          输入自然语言指令，注入到运行中的任务（任务运行时可用）
+        </p>
+        <div class="intervention">
+          <input type="text" id="intervention" placeholder="如：扫描 8080 端口">
+          <button onclick="sendIntervention()">注入</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>任务状态</h2>
+        <div id="taskStatus">
+          <span class="status pending">未提交</span>
+        </div>
+        <div class="metrics" id="metrics" style="margin-top: 8px;"></div>
+      </div>
+    </div>
+
+    <!-- 右侧：实时日志 -->
+    <div>
+      <div class="panel">
+        <h2>实时步骤日志</h2>
+        <div id="steps">
+          <p style="color: #8b949e;">等待任务提交...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentTaskId = null;
+    let ws = null;
+
+    async function submitTask() {
+      const desc = document.getElementById('desc').value.trim();
+      const target = document.getElementById('target').value.trim();
+      const file = document.getElementById('file').value.trim();
+      const maxSteps = parseInt(document.getElementById('max_steps').value) || 35;
+      const enableL3 = document.getElementById('enable_l3').checked;
+
+      if (!desc && !target && !file) {
+        alert('至少填写描述/目标/附件之一');
+        return;
+      }
+
+      const resp = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          desc, target, file, max_steps: maxSteps, enable_l3: enableL3
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({detail: resp.statusText}));
+        alert('提交失败: ' + (err.detail || ''));
+        return;
+      }
+
+      const data = await resp.json();
+      currentTaskId = data.task_id;
+      document.getElementById('taskStatus').innerHTML =
+        `<span class="status running">运行中</span> <code>${currentTaskId}</code>`;
+      document.getElementById('steps').innerHTML = '';
+      connectWebSocket(currentTaskId);
+    }
+
+    function connectWebSocket(taskId) {
+      if (ws) ws.close();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws/tasks/${taskId}`);
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'history') {
+          renderHistory(msg.data);
+        } else if (msg.type === 'step') {
+          renderStep(msg.data);
+        } else if (msg.type === 'final') {
+          renderFinal(msg.data);
+        } else if (msg.type === 'error') {
+          renderError(msg.data);
+        }
+      };
+
+      ws.onclose = () => console.log('WebSocket closed');
+      ws.onerror = (e) => console.error('WebSocket error', e);
+    }
+
+    function renderHistory(taskData) {
+      const container = document.getElementById('steps');
+      container.innerHTML = '';
+      taskData.steps.forEach(s => renderStep(s));
+      updateMetrics(taskData);
+    }
+
+    function renderStep(step) {
+      const container = document.getElementById('steps');
+      const div = document.createElement('div');
+      div.className = 'step' + (step.is_final ? ' final' : (step.is_error ? ' error' : ''));
+      let html = `<div class="thought">[Step ${step.step_no}] Thought: ${escapeHtml(step.thought)}</div>`;
+      if (step.action) {
+        html += `<div class="action">Action: ${escapeHtml(step.action)}(${escapeHtml(step.action_input)})</div>`;
+      }
+      if (step.observation) {
+        html += `<div class="observation">Observation: ${escapeHtml(step.observation)}</div>`;
+      }
+      if (step.is_final) {
+        html += `<div class="action" style="color:#3fb950">Final Answer: ${escapeHtml(step.final_answer)}</div>`;
+      }
+      if (step.is_error) {
+        html += `<div class="action" style="color:#f85149">Error: ${escapeHtml(step.error_msg)}</div>`;
+      }
+      div.innerHTML = html;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function renderFinal(data) {
+      const statusEl = document.getElementById('taskStatus');
+      const cls = data.success ? 'success' : 'failed';
+      const text = data.success ? '成功' : '失败';
+      statusEl.innerHTML = `<span class="status ${cls}">${text}</span> <code>${currentTaskId}</code>`;
+      document.getElementById('metrics').innerHTML = `
+        步数: <span>${data.step_count}</span> |
+        Tokens: <span>${data.total_tokens}</span> |
+        Flag: <span>${escapeHtml(data.final_answer || data.fail_reason || '')}</span>
+      `;
+    }
+
+    function renderError(data) {
+      const statusEl = document.getElementById('taskStatus');
+      statusEl.innerHTML = `<span class="status failed">错误</span> <code>${currentTaskId}</code>`;
+      document.getElementById('steps').appendChild(
+        Object.assign(document.createElement('div'), {
+          className: 'step error',
+          innerHTML: `<div style="color:#f85149">Error: ${escapeHtml(data.error)}</div>`,
+        })
+      );
+    }
+
+    function updateMetrics(taskData) {
+      document.getElementById('metrics').innerHTML = `
+        步数: <span>${taskData.step_count}</span> |
+        状态: <span>${taskData.status}</span> |
+        耗时: <span>${taskData.elapsed.toFixed(1)}s</span>
+      `;
+    }
+
+    async function sendIntervention() {
+      if (!currentTaskId) {
+        alert('无运行中的任务');
+        return;
+      }
+      const instruction = document.getElementById('intervention').value.trim();
+      if (!instruction) return;
+
+      const resp = await fetch(`/api/tasks/${currentTaskId}/intervene`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({instruction}),
+      });
+
+      if (resp.ok) {
+        document.getElementById('intervention').value = '';
+        alert('指令已注入');
+      } else {
+        const err = await resp.json().catch(() => ({detail: '注入失败'}));
+        alert('注入失败: ' + err.detail);
+      }
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    // 页面加载时检查健康状态
+    fetch('/api/health').then(r => r.json()).then(d => {
+      console.log('Health:', d);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+
+# 环境与密钥（隐私，不入库）
+.env
+
+# 运行时数据（解题积累，仅本地；data/ 下白板骨架 .gitkeep / index.json 保留入库）
+data/chroma/*
+!data/chroma/.gitkeep
+data/skills/*.md
+data/ctf.db
+data/*.db
+*.log

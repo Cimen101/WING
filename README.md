@@ -110,10 +110,14 @@ python main.py web --port 8000
 | WING-Goose  | [WING\_GOOSE\_DESIGN.md](./WING-Goose/WING_GOOSE_DESIGN.md)    | 架构/swarm/总线/复盘/docker 链 + **相对 Falcon 的更新审计** + 使用方法 |
 | WING-Corvus | [WING\_CORVUS\_DESIGN.md](./WING-Corvus/WING_CORVUS_DESIGN.md) | 架构/总指挥/战略层/多阶段协调/flag 验证 + **相对 Goose 的更新审计** + 使用方法 |
 
+## 开发记录
+
+版本演进记录集中存放于 [dev-notes/](./dev-notes/)：`updates/`（更新信息）、`tests/`（测试信息）、`issues/`（遇到的问题与修复）、`logs/`（运行摘要）。
+
 ## 隐私与数据
 
-- 本仓库为**公开仓库**，仅包含三个版本的核心代码与文档，**不含**任何积累技能、题目数据、运行日志、API 密钥等隐私内容
-- 隐私内容（技能库、报告、日志、任务数据、配置文件等）备份在私有仓库 [WING-data](https://github.com/Cimen101/WING-data)（私有，仅授权访问）
+- 本仓库为**公开仓库**，包含三个版本的核心代码与文档，以及 dev-notes 下的公开开发记录与运行摘要
+- 完整技能库、原始运行轨迹、任务数据与配置文件等隐私内容仅保存在本地，并备份于私有仓库 [WING-data](https://github.com/Cimen101/WING-data)（私有，仅授权访问）
 - 各版本 `data/` 为白板空库，解题积累的数据仅保存在本地
 
 ## 声明

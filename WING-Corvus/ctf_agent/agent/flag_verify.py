@@ -1,4 +1,4 @@
-"""Flag 验证系统: 提交前轨迹检查 — 代码机制 + LLM 审查.
+"""Flag 验证系统 (Sprint 36.2): 提交前轨迹检查 — 代码机制 + LLM 审查.
 
 背景 (2026-08-05 hard5 复盘): agent 在 web 题中通过 GitHub API 抓取官方
 writeup.md 获得 flag 并直接提交, 轨迹看起来"有工具调用"但 flag 来源是非正常
@@ -95,7 +95,24 @@ class FlagVerifier:
         step_no, observation, action, action_input = src
         res = FlagVerifyResult(source_step=step_no,
                                source_channel=self._classify_channel(action, action_input, observation))
-        # ② 代码机制: 可疑渠道拦截
+        # ② 代码机制: 自导自演检测 (SU_RSA 假 flag 复盘修复) —
+        # flag 若出现在该步的**工具输入** (agent 自己写的脚本/命令) 中,
+        # 说明 agent 把猜测/编造的 flag 直接硬编码进脚本再执行,
+        # 输出里出现 flag 只是脚本 echo 了它, 并非从附件/靶机真实提取 → 拒绝.
+        # 真实解法: flag 应只出现在工具**输出** (解密/读取/靶机响应), 输入中不含 flag.
+        core = self._flag_core(flag)
+        if flag in action_input or (core and core in action_input):
+            return FlagVerifyResult(
+                passed=False,
+                source_step=step_no,
+                source_channel=res.source_channel,
+                reason=(
+                    "flag 同时出现在该步的工具输入(脚本/命令)中: 疑似 agent 把猜测的 "
+                    "flag 硬编码进脚本自导自演, 而非从附件/靶机真实提取. "
+                    "真实 flag 必须只来自工具输出观测. 请删除该来源, 重新从靶机/附件获取."
+                ),
+            )
+        # ③ 代码机制: 可疑渠道拦截
         hit = self._suspicious_hit(action, action_input, observation)
         if hit:
             res.passed = False
@@ -197,6 +214,9 @@ class FlagVerifier:
    raw.githubusercontent、api.github.com、搜索 writeup/solution/flags.txt)
 2. 轨迹中没有任何一步直接访问靶机/读取附件 (flag 凭空出现)
 3. flag 是编造的 (与所有观测内容无关)
+4. flag 只出现在 agent 自己构造并执行的脚本 (docker_python/ssh_python 等) 的
+   stdout 中, 而该脚本的**输入/脚本内容本身硬编码了 flag 文本** (即 agent 把猜测的
+   flag 写进脚本再 echo 出来, 未从附件文件或靶机响应中真实提取) → 判定为编造
 
 ## 判定为 PASS 的情况:
 - flag 出现在靶机响应 (HTTP 页面/接口返回)、附件文件内容、或对靶机交互 (nc/pwn/shell)
@@ -236,11 +256,13 @@ class FlagVerifier:
             content = getattr(resp, "content", "") or ""
             m = re.search(r"\{.*\}", content, re.DOTALL)
             if not m:
-                return True, "LLM 输出无法解析, 视为通过 (代码机制已兜底)"
+                # SU_RSA 假 flag 复盘修复: LLM 审查输出无法解析时保守拒绝 (fail-closed),
+                # 避免"审查不可用 → 放行"导致的幻觉 flag 假阳性.
+                return False, "LLM 审查输出无法解析, 保守拒绝 (fail-closed)"
             data = json.loads(m.group(0))
             return bool(data.get("pass")), str(data.get("reason") or "")
         except Exception as e:  # noqa: BLE001
-            return True, f"LLM 审查异常视为通过: {str(e)[:100]}"
+            return False, f"LLM 审查异常, 保守拒绝 (fail-closed): {str(e)[:100]}"
 
 
 __all__ = ["FlagVerifier", "FlagVerifyResult"]

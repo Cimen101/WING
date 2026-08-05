@@ -31,23 +31,59 @@ WING-Goose/
 ├── data/                 # 白板数据库（空库，下载即用）
 ├── main.py / pyproject.toml / .env.example
 ├── README.md
-└── WING_GOOSE_DESIGN.md # 1500+ 行完整设计+使用文档
+└── WING_GOOSE_DESIGN.md # 2000+ 行完整设计+使用文档
 ```
 
 ## 快速开始
 
+本版本提供**两种运行模式**：
+
+| 模式 | 入口 | 说明 |
+| :-- | :-- | :-- |
+| 单 agent 快速模式 | `python main.py run ...` | 单题快速验证/调试，**不启动** swarm |
+| swarm 并行模式 | `.env` 开 `SWARM_ENABLED` + 调 `SwarmCoordinator` | 同题三风格并行（一解出即杀其余） |
+
+### 单 agent 快速模式
+
 ```bash
 # 1. 安装依赖
-pip install -e .
+pip install -e ".[docker]"      # 推荐（含 docker-py）；纯内置工具可 pip install -e .
 
-# 2. 配置环境（含 LLM API Key；swarm/docker 相关字段见文档）
+# 2. 配置环境（至少填入 OPENAI_API_KEY / OPENAI_BASE_URL）
 cp .env.example .env
 
-# 3. 运行（默认 SWARM_ENABLED=true 走三风格并行）
+# 3. 运行（单 agent，非 swarm）
 python main.py run --target http://target/ --desc "题目描述" --type web --report report.md
+```
 
-# 4. docker 执行链（可选）：构建镜像后 DOCKER_ENABLED=true 生效
-docker build -f scripts/docker_test/Dockerfile.wing-goose -t wing-goose:v2 .
+### swarm 并行模式
+
+> `main.py run` 是单 agent，不会启动 swarm。需要同题三风格并行时，用 `SwarmCoordinator` 驱动（每路一个 solve.py 子进程，见 DESIGN 使用方法章节）：
+
+```bash
+# .env 开启开关
+SWARM_ENABLED=true
+DOCKER_ENABLED=true
+KALI_ENABLED=false
+```
+
+```python
+from ctf_agent.swarm import SwarmCoordinator
+
+def verify_flag(flag: str):
+    return flag.startswith("CTF{"), "格式校验"
+
+task = {
+    "challenge_id": "demo",
+    "bus_challenge_id": "demo",
+    "bus_dir": "data/bus/demo",
+    "desc": "题目描述（题面+附件路径+靶机URL+规则）",
+    "type": "web", "difficulty": "medium",
+    "max_steps": 40, "max_submissions": 3,
+}
+sw = SwarmCoordinator(project_root=".", verify_flag=verify_flag)
+res = sw.run(task=task, styles=["conservative", "aggressive", "innovative"], max_seconds=1200)
+print(f"solved={res.solved} flag={res.flag} winner={res.winner_style}")
 ```
 
 详细说明见 **[WING_GOOSE_DESIGN.md](./WING_GOOSE_DESIGN.md) 使用方法章节**（含 .env 逐字段、swarm 启用、docker 链配置、14 项常见问题排查）。
@@ -56,9 +92,9 @@ docker build -f scripts/docker_test/Dockerfile.wing-goose -t wing-goose:v2 .
 
 | 版本 | 定位 | 关键差异 |
 |------|------|----------|
-| [WING-Falcon](./WING-Falcon) | 精英单兵 | 单 agent 解题引擎基线 |
-| [WING-Goose](./WING-Goose) | 雁阵 | 同题三风格并行 + 消息总线 + 轨迹复盘 + docker 链 |
-| [WING-Corvus](./WING-Corvus) | 渡鸦 | 三层协作小队（总指挥+战略层+战术层）+ 多阶段协调 |
+| [WING-Falcon](../WING-Falcon) | 精英单兵 | 单 agent 解题引擎基线 |
+| [WING-Goose](../WING-Goose) | 雁阵 | 同题三风格并行 + 消息总线 + 轨迹复盘 + docker 链 |
+| [WING-Corvus](../WING-Corvus) | 渡鸦 | 三层协作小队（总指挥+战略层+战术层）+ 多阶段协调 |
 
 ## 声明
 

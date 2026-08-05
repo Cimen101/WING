@@ -31,7 +31,7 @@ WING-Falcon/
 ├── pyproject.toml
 ├── .env.example          # 环境配置模板
 ├── README.md
-└── WING_FALCON_DESIGN.md # 1500+ 行完整设计+使用文档
+└── WING_FALCON_DESIGN.md # 2000+ 行完整设计+使用文档
 ```
 
 ## 快速开始
@@ -56,9 +56,9 @@ python main.py web --port 8000
 
 | 版本 | 定位 | 关键差异 |
 |------|------|----------|
-| [WING-Falcon](./WING-Falcon) | 精英单兵 | 单 agent 解题引擎基线 |
-| [WING-Goose](./WING-Goose) | 雁阵 | 同题三风格并行 + 消息总线 + 轨迹复盘 + docker 链 |
-| [WING-Corvus](./WING-Corvus) | 渡鸦 | 三层协作小队（总指挥+战略层+战术层）+ 多阶段协调 |
+| [WING-Falcon](../WING-Falcon) | 精英单兵 | 单 agent 解题引擎基线 |
+| [WING-Goose](../WING-Goose) | 雁阵 | 同题三风格并行 + 消息总线 + 轨迹复盘 + docker 链 |
+| [WING-Corvus](../WING-Corvus) | 渡鸦 | 三层协作小队（总指挥+战略层+战术层）+ 多阶段协调 |
 
 > 本版本是 WING-Goose 的升级基线：WING-Goose 在此基线上新增同题多风格并行（消息总线 + 独立上下文 LLM 轨迹复盘 + docker 工具链）。
 

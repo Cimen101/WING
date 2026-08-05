@@ -37,23 +37,69 @@ WING-Corvus/
 ├── data/                 # 白板数据库（空库，下载即用）
 ├── main.py / pyproject.toml / .env.example
 ├── README.md
-└── WING_CORVUS_DESIGN.md # 1500+ 行完整设计+使用文档
+└── WING_CORVUS_DESIGN.md # 2000+ 行完整设计+使用文档
 ```
 
 ## 快速开始
 
+本版本提供**两种运行模式**：
+
+| 模式 | 入口 | 说明 |
+| :-- | :-- | :-- |
+| 单 agent 快速模式 | `python main.py run ...` | 单题快速验证/调试，**不启动** swarm/总指挥 |
+| 总指挥完整模式 | `.env` 开 `SWARM_ENABLED` + `SWARM_COMMANDER_ENABLED` + 调 `SwarmCoordinator` | 三风格并行 + 总指挥三层协作 |
+
+### 单 agent 快速模式
+
 ```bash
 # 1. 安装依赖
-pip install -e .
+pip install -e ".[docker]"      # 推荐（含 docker-py）；纯内置工具可 pip install -e .
 
-# 2. 配置环境（含 LLM API Key；SWARM_COMMANDER_ENABLED 控制总指挥开关）
+# 2. 配置环境（至少填入 OPENAI_API_KEY / OPENAI_BASE_URL）
 cp .env.example .env
 
-# 3. 运行（默认走总指挥 + 三风格并行）
+# 3. 运行（单 agent，非 swarm）
 python main.py run --target http://target/ --desc "题目描述" --type web --report report.md
-
-# 4. 总指挥降级：总指挥 LLM 不可用时自动降级回纯雁阵（swarm），不影响主流程
 ```
+
+### 总指挥完整模式（swarm + 三层协作）
+
+> `main.py run` 是单 agent，不会启动总指挥。需要三风格并行 + 总指挥领题分工时：
+
+```bash
+# 1. .env 开启开关
+SWARM_ENABLED=true
+SWARM_COMMANDER_ENABLED=true
+DOCKER_ENABLED=true
+KALI_ENABLED=false
+
+# 2. 最小 swarm 驱动（保存为 demo_swarm.py 后运行；完整示例见 DESIGN 20.8）
+```
+
+```python
+from ctf_agent.swarm import SwarmCoordinator
+
+def verify_flag(flag: str):            # 提交前验证（返回 (correct, feedback)）
+    return flag.startswith("SUCTF{"), "格式校验"
+
+task = {
+    "challenge_id": "demo",
+    "bus_challenge_id": "demo",
+    "bus_dir": "data/bus/demo",
+    "desc": "题目描述（题面+附件路径+靶机URL+规则）",
+    "type": "web", "difficulty": "medium",
+    "max_steps": 40, "max_submissions": 3,
+}
+sw = SwarmCoordinator(project_root=".", verify_flag=verify_flag)
+res = sw.run(task=task, styles=["conservative", "aggressive", "innovative"], max_seconds=1200)
+print(f"solved={res.solved} flag={res.flag} winner={res.winner_style}")
+```
+
+```bash
+python demo_swarm.py
+```
+
+> 说明：swarm 每路 agent 是一个 `solve.py` 子进程（task JSON 带 style/bus_dir），由 `SwarmCoordinator` 统一编排；总指挥实例运行在 swarm 主进程内。总指挥 LLM 不可用时自动降级回纯雁阵（swarm），不影响主流程。
 
 详细说明（总指挥模式启用/降级、多阶段协调、.env 逐字段）见 **[WING_CORVUS_DESIGN.md](./WING_CORVUS_DESIGN.md) 使用方法章节**。
 
@@ -61,9 +107,9 @@ python main.py run --target http://target/ --desc "题目描述" --type web --re
 
 | 版本 | 定位 | 关键差异 |
 |------|------|----------|
-| [WING-Falcon](./WING-Falcon) | 精英单兵 | 单 agent 解题引擎基线 |
-| [WING-Goose](./WING-Goose) | 雁阵 | 同题三风格并行 + 消息总线 + 轨迹复盘 + docker 链 |
-| [WING-Corvus](./WING-Corvus) | 渡鸦 | 三层协作小队（总指挥+战略层+战术层）+ 多阶段协调 |
+| [WING-Falcon](../WING-Falcon) | 精英单兵 | 单 agent 解题引擎基线 |
+| [WING-Goose](../WING-Goose) | 雁阵 | 同题三风格并行 + 消息总线 + 轨迹复盘 + docker 链 |
+| [WING-Corvus](../WING-Corvus) | 渡鸦 | 三层协作小队（总指挥+战略层+战术层）+ 多阶段协调 |
 
 ## 声明
 

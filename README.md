@@ -58,6 +58,7 @@ WING-Corvus（渡鸦）── 协作小队（总指挥 + 战略层 + 战术层�
 ```
 WING/
 ├── README.md              # 本文件（三版本差异介绍）
+├── dev-notes/             # 开发记录（更新信息 / 测试信息 / 问题修复 / 运行摘要）
 ├── WING-Falcon/           # 精英单兵
 │   ├── ctf_agent/         # 核心引擎（ReAct + 巡查 + 三层记忆 + 工具链）
 │   ├── data/              # 白板数据库（空库，下载即用）
@@ -69,7 +70,7 @@ WING/
 │   ├── data/              # 白板数据库（空库）
 │   ├── main.py / pyproject.toml / .env.example
 │   ├── README.md
-│   └── WING_GOOSE_DESIGN.md    # 1500+ 行设计 + 使用方法（含相对 Falcon 的更新审计）
+│   └── WING_GOOSE_DESIGN.md    # 2000+ 行设计 + 使用方法（含相对 Falcon 的更新审计）
 └── WING-Corvus/           # 协作小队（最新）
     ├── ctf_agent/         # 核心引擎（+ commander 总指挥 + flag 验证 + 多阶段协调）
     ├── data/              # 白板数据库（空库）
@@ -80,6 +81,15 @@ WING/
 
 ## 快速开始
 
+本系列提供**两种运行模式**（详见各版本 DESIGN 文档使用方法章节）：
+
+| 模式 | 入口 | 适用 |
+| :-- | :-- | :-- |
+| 单 agent 快速模式 | `python main.py run --target URL --desc "题面"` | 单题快速验证、调试（不启用 swarm/总指挥） |
+| swarm / 总指挥完整模式 | `.env` 开 `SWARM_ENABLED` / `SWARM_COMMANDER_ENABLED` + 调用 `SwarmCoordinator`（见 DESIGN 20.8） | 同题多风格并行 / 三层协作小队 |
+
+### 单 agent 快速模式
+
 ```bash
 # 选择一个版本，进入对应目录
 cd WING-Corvus          # 或 WING-Goose / WING-Falcon
@@ -89,7 +99,7 @@ pip install -e .
 
 # 2. 配置环境（每个版本自带 .env.example，逐字段说明见对应 DESIGN 文档）
 cp .env.example .env
-# 编辑 .env：填入 OPENAI_API_KEY / ZEN_API_KEY 等 LLM 配置
+# 编辑 .env：至少填入 OPENAI_API_KEY / OPENAI_BASE_URL（单 agent 模式走官方兼容 API）
 
 # 3. 运行
 python main.py run --target http://target/ --desc "题目描述" --type web --report report.md
@@ -98,11 +108,26 @@ python main.py run --target http://target/ --desc "题目描述" --type web --re
 python main.py web --port 8000
 ```
 
+### swarm / 总指挥完整模式
+
+> `main.py run` 是**单 agent**，不会启动 swarm/总指挥。需要三风格并行或总指挥协作时：
+
+```bash
+# 1. .env 中开启开关（WING-Corvus 还需开总指挥）
+SWARM_ENABLED=true
+SWARM_COMMANDER_ENABLED=true        # 仅 WING-Corvus
+DOCKER_ENABLED=true
+KALI_ENABLED=false
+
+# 2. 编写最小 swarm 驱动（task JSON 带 style/bus_dir，示例见 DESIGN 20.8）
+# 3. 运行：每路一个 solve.py 子进程由 SwarmCoordinator 统一编排
+```
+
 > 每个版本的 `data/` 已内置**空白数据库骨架**（chroma 空库 + skills 空 index.json），下载即可运行；解题过程中会自动积累技能与经验（存入本地 data/，不进 git）。
 
 ## 设计文档
 
-每个版本自带一份 **1500+ 行完整设计与使用文档**（格式参考技术设计文档，末尾含使用方法章节）：
+每个版本自带一份 **2000+ 行完整设计与使用文档**（格式参考技术设计文档，末尾含使用方法章节）：
 
 | 版本          | 文档                                                             | 内容                                                   |
 | ----------- | -------------------------------------------------------------- | ---------------------------------------------------- |

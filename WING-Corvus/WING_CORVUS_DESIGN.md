@@ -1771,7 +1771,28 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 # 2. 准备 task JSON（或由 NSS Runner 自动生成）
 # 见 20.3 的 task JSON 示例（含 bus_dir/bus_challenge_id/commander_enabled=true）
 
-# 3. 启动 swarm 求解（单路调试可先只跑一路）
+# 3. 多路 swarm 驱动（推荐；每路一个 solve.py 子进程，总指挥在 swarm 主进程内）
+cat > swarm_demo.py <<'EOF'
+from ctf_agent.swarm import SwarmCoordinator
+
+def verify_flag(flag: str):            # 提交前验证（返回 (correct, feedback)）
+    return flag.startswith("SUCTF{"), "格式校验"
+
+task = {
+    "challenge_id": "demo",
+    "bus_challenge_id": "demo",
+    "bus_dir": "data/bus/demo",
+    "desc": "题目描述（题面+附件路径+靶机URL+规则）",
+    "type": "web", "difficulty": "medium",
+    "max_steps": 40, "max_submissions": 3,
+}
+sw = SwarmCoordinator(project_root=".", verify_flag=verify_flag)
+res = sw.run(task=task, styles=["conservative", "aggressive", "innovative"], max_seconds=1200)
+print(f"solved={res.solved} flag={res.flag} winner={res.winner_style}")
+EOF
+python swarm_demo.py
+
+# 3b. 单路调试（可先只跑一路，验证总指挥链路）
 python -u -m ctf_agent.solve --task-file task.json
 
 # 4. 观察输出

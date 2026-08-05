@@ -1,6 +1,7 @@
 > 🚧 WARNING: AI‑Generated Shit‑Mountain Project | For fun only, NOT for learning / production
 
 <img src="./logo.png" alt="True-CTF-Agent" width="50%" />
+
 ## 🎉 恭喜你，发现了 AI 屎山！
 本项目代码完全由 DeepSeek‑V4 系列模型生成，开发模式为增量叠加 + 补丁式修补。
 开发准则：**优先打补丁，尽量避免重构，能凑合用就绝不重构**。

@@ -464,11 +464,11 @@ SYSTEM_PROMPT_TEMPLATE =
 - 直接读取环境中的 secret.txt（必须通过 verify 接口）；
 - **第 1 步直接 Final Answer**（无工具调用 = 幻觉，会被引擎自动拒绝）。
 
-**无回显 / 盲注类题型（no_echo_ssti 复盘）**：页面不回显渲染结果时用时间盲注 / 报错注入 / 写文件再读（RCE 后写 static/out.txt 再 http_request 读取）/ DNS 外带；flag 必须真实出现在 observation 中；Thought 不得虚构工具返回。
+**无回显 / 盲注类题型（复盘）**：页面不回显渲染结果时用时间盲注 / 报错注入 / 写文件再读（RCE 后写 static/out.txt 再 http_request 读取）/ DNS 外带；flag 必须真实出现在 observation 中；Thought 不得虚构工具返回。
 
-**Web 页面交互入口优先（bypass1 复盘）**：首页 HTML 的 form/input/button 是真实入口，先按表单逻辑测参数再爆破；页面标题/注释/提示文本是核心线索；参数测试要"对比基线"；不要在目录爆破上消耗 >5 步。
+**Web 页面交互入口优先（复盘）**：首页 HTML 的 form/input/button 是真实入口，先按表单逻辑测参数再爆破；页面标题/注释/提示文本是核心线索；参数测试要"对比基线"；不要在目录爆破上消耗 >5 步。
 
-**共享靶机 flag 定位（round5 复盘）**：RCE 后找 flag 优先级——① 按题目标题匹配 `/flag_<关键词>`；② 列出全部 `/flag*` 逐个比对；③ 才考虑环境变量/数据库。不要深挖共享靶机上的无关遗留文件（诱饵）。
+**共享靶机 flag 定位（复盘）**：RCE 后找 flag 优先级——① 按题目标题匹配 `/flag_<关键词>`；② 列出全部 `/flag*` 逐个比对；③ 才考虑环境变量/数据库。不要深挖共享靶机上的无关遗留文件（诱饵）。
 
 **框架漏洞套路库（ThinkPHP 复盘）**：
 
@@ -478,7 +478,7 @@ SYSTEM_PROMPT_TEMPLATE =
 - PHP 反序列化 POP 链构造三陷阱：private 属性长度公式 `1+len(class)+1+len(prop)`（不是 len 直接拼接）；PHP 8.4 参数类型严格（readfile 第二参传 [] → TypeError，system/passthru/exec 可行）；null 字节传输必须用 POST；
 - 源码分析收敛规则：框架源码分析 ≤5 步、.git 泄露 ≤3 步、确认 LFI 后直接用。
 
-**JWT crack 套路（jwt_crack 复盘）**：提取 JWT → base64 解码 header+payload → 爆破密钥（PyJWT/hashcat）→ 签发伪造 JWT → 查看完整响应 body → 提取 flag。⛔ action_input JSON 解析失败（is_error=true）时不能直接提交 Final Answer。
+**JWT crack 套路（复盘）**：提取 JWT → base64 解码 header+payload → 爆破密钥（PyJWT/hashcat）→ 签发伪造 JWT → 查看完整响应 body → 提取 flag。⛔ action_input JSON 解析失败（is_error=true）时不能直接提交 Final Answer。
 
 #### 3.11.4 题型专项强化（内置于提示词）
 

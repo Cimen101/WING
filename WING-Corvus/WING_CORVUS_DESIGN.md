@@ -882,7 +882,7 @@ while not stop_event.is_set():
 
 ### 8.1 背景
 
-（hard5 复盘）：agent 在 web 题中通过 GitHub API 抓取官方 writeup.md 获得 flag 并直接提交，轨迹看起来"有工具调用"但 flag 来源是非正常解题渠道（外部题解），现有"至少 1 次工具调用"反幻觉兜底无法拦截。
+（复盘）：agent 在 web 题中通过 GitHub API 抓取官方 writeup.md 获得 flag 并直接提交，轨迹看起来"有工具调用"但 flag 来源是非正常解题渠道（外部题解），现有"至少 1 次工具调用"反幻觉兜底无法拦截。
 
 ### 8.2 设计：两次验证，均通过才放行提交
 

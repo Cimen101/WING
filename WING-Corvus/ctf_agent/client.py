@@ -1,4 +1,4 @@
-"""AgentClient SDK (Sprint 26): 统一的 CTF-Agent 调用接口.
+"""AgentClient SDK: 统一的 CTF-Agent 调用接口.
 
 封装子进程管理 + JSONL 协议解析 + 双向通信, 让任何调用方 (NSS Runner /
 测试中继 / 第三方应用) 都能用 3 行代码接入 CTF-Agent.
@@ -54,7 +54,7 @@ class AgentCallbacks:
     on_submission: Callable[[str], tuple[bool, str]] | None = None
     on_result: Callable[[dict], None] | None = None
     on_proc: Callable[[subprocess.Popen], None] | None = None  # WING-Goose: 子进程注册 (swarm 杀兄弟用)
-    # Sprint 36 (WING-Corvus): 完整巡查/总指挥消息透传 (含 belief_state/reflection/
+    # 完整巡查/总指挥消息透传 (含 belief_state/reflection/
     # commander 战略层详情). on_log 只转发摘要, 需要完整详情 (写文件复盘) 的调用方订阅此回调.
     on_coordinator: Callable[[dict], None] | None = None
 
@@ -125,7 +125,7 @@ class AgentClient:
             )
 
         cmd = [
-            self.python, "-u",  # -u: 强制 unbuffered (Sprint 26 实时性)
+            self.python, "-u",  # -u: 强制 unbuffered (实时性)
             "-m", "ctf_agent.solve",
             "--task-file", str(actual_task_file),
         ]
@@ -156,7 +156,7 @@ class AgentClient:
             if callbacks.on_log:
                 callbacks.on_log("INFO", msg)
 
-        # Sprint 36.1: 无进度 watchdog — 子进程卡住 (LLM 挂起/工具阻塞) 时,
+        # 无进度 watchdog — 子进程卡住 (LLM 挂起/工具阻塞) 时,
         # readline() 会无限阻塞, max_seconds 形同虚设 (根因: swarm 模式无
         # no_progress 兜底, 3 路共享 go provider 变慢时日志全停 → 用户感知"卡死").
         # watchdog 监控任何非 heartbeat 消息进度, 超时 kill 进程树 (含 docker/ssh
@@ -238,7 +238,7 @@ class AgentClient:
                 elif msg_type == "coordinator":
                     # WING-Goose: 巡查指导器消息 — 通用转发为 COORD 日志.
                     # 不解析具体字段 (保持 SDK 通用性), 构造可读摘要供调用方显示.
-                    # Sprint 36: 同时透传完整 dict 给 on_coordinator (如调用方订阅),
+                    # 同时透传完整 dict 给 on_coordinator (如调用方订阅),
                     # 供文件日志记录 belief_state/reflection 等完整详情.
                     if callbacks.on_coordinator:
                         try:

@@ -8,7 +8,7 @@
 设计原则：
 - 复用现有 ReActEngine（不重写推理循环）
 - 失败降级：Critic 调用失败时默认通过，不阻塞流程
-- 单线程顺序执行（并行赛马在 Sprint 5.10 实现）
+- 单线程顺序执行（并行赛马已实现）
 - 工具白名单按题型（web/pwn/crypto/misc/reverse）过滤
 """
 
@@ -155,8 +155,8 @@ PLANNER_SYSTEM_PROMPT = """你是一位 CTF 解题任务规划专家（Planner�
   {
     "id": "step1",
     "type": "recon",
-    "description": "扫描目标 192.168.1.1 的开放端口与服务版本",
-    "target": "192.168.1.1",
+    "description": "扫描目标 10.0.0.5 的开放端口与服务版本",
+    "target": "10.0.0.5",
     "depends_on": [],
     "executor_hint": "使用 nmap 全端口扫描，记录开放端口与服务版本"
   }

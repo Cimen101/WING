@@ -1,10 +1,10 @@
-"""L2 OSINT/取证工具 (Sprint 11 新增).
+"""L2 OSINT/取证工具 (新增).
 
 封装 Kali 上预装的 OSINT/取证工具为 Tool 接口,让 LLM 直接调用:
 - ExifToolTool: 读取 JPEG/PNG EXIF 元数据 (GPS/相机/时间戳)
 - SteghideTool: 隐写术分析 (JPEG steghide extract)
 - BinwalkTool: 嵌入式文件提取 (固件/forensics)
-- StringsTool: 提取可读字符串 (Sprint 11 OSINT 增强版: 支持中文+宽字符)
+- StringsTool: 提取可读字符串 (OSINT 增强版: 支持中文+宽字符)
 - TsharkTool: pcap 协议解析 (forensics PCAP_Secret 用)
 
 设计原则:
@@ -41,7 +41,7 @@ def _check_tool(ssh: SSHClient, tool_name: str) -> bool:
 # ============ ExifTool ============
 
 class ExifToolTool(Tool):
-    """读取图片 EXIF 元数据 (Sprint 11).
+    """读取图片 EXIF 元数据 ().
 
     用途: OSINT 图片题 (如 Where_am_i, 包含 GPS/相机/时间戳).
     适用: JPEG, PNG, TIFF, HEIC 等常见格式.
@@ -128,7 +128,7 @@ class ExifToolTool(Tool):
 # ============ Steghide ============
 
 class SteghideTool(Tool):
-    """隐写术分析 (Sprint 11).
+    """隐写术分析 ().
 
     用途: 提取 JPEG/BMP/WAV/AU 中的隐写数据.
     注意: 需要密码 (steghide 默认空密码).
@@ -213,7 +213,7 @@ class SteghideTool(Tool):
 # ============ Binwalk ============
 
 class BinwalkTool(Tool):
-    """嵌入式文件提取 (Sprint 11).
+    """嵌入式文件提取 ().
 
     用途: 固件/forensics 文件中提取嵌入的 zip/jpg/elf/squashfs 等.
     """
@@ -274,7 +274,7 @@ class BinwalkTool(Tool):
 # ============ Tshark (forensics PCAP) ============
 
 class TsharkTool(Tool):
-    """pcap 协议解析 (Sprint 11).
+    """pcap 协议解析 ().
 
     用途: PCAP_Secret 等 pcap 流量分析题.
     """
@@ -348,7 +348,7 @@ class TsharkTool(Tool):
 # ============ 工厂 ============
 
 def osint_tools(ssh_client: SSHClient) -> list[Tool]:
-    """创建 OSINT/取证工具集 (Sprint 11).
+    """创建 OSINT/取证工具集 ().
 
     Args:
         ssh_client: 已连接的 SSHClient 实例

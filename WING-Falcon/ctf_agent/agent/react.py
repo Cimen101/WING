@@ -23,13 +23,13 @@ from ctf_agent.memory import LongTermMemory, MidTermMemory, ShortTermMemory
 from ctf_agent.orchestrator import CircuitBreaker, TaskStatus
 from ctf_agent.tools.base import Tool, ToolResult
 from ctf_agent.tools.memory_tools import memory_tools
-from ctf_agent.agent.failed_trajectory_cache import (  # Sprint 10
+from ctf_agent.agent.failed_trajectory_cache import (  # 
     FailedTrajectoryCache,
     get_default_cache,
 )
 from ctf_agent.agent.prompts import (
     FORMAT_ERROR_HINT,
-    NULL_OBSERVATION_HINT,  # Sprint 6 P0: null observation 兜底
+    NULL_OBSERVATION_HINT,  # null observation 兜底
     OBSERVATION_TEMPLATE,
     build_system_prompt,
     build_task_prompt,
@@ -60,10 +60,10 @@ class ParsedAction:
 # 正则：Final Answer（容错大小写、冒号后可有空格）
 _RE_FINAL = re.compile(r"Final\s*Answer\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
 # 正则：Action: 工具名（一行内的非空白字符序列）
-# Sprint 14 P4: 改为匹配 [a-z_][a-z0-9_]* (工具名格式), 跳过 ** 等 Markdown 装饰
+# 改为匹配 [a-z_][a-z0-9_]* (工具名格式), 跳过 ** 等 Markdown 装饰
 # LLM (deepseek-chat) 经常输出 `**Action:** ssh_exec`, 旧 regex `([^\s\n]+)` 会捕获 `**`
 # 也支持 `Action: \`ssh_exec\`` 反引号格式 (LLM 偶尔用)
-# Sprint 32.4b: 加负向前瞻 (?!\s*:?\s*Input\b) 避免把 "Action Input: {}" 中
+# 加负向前瞻 (?!\s*:?\s*Input\b) 避免把 "Action Input: {}" 中
 # 的 "Input" 误解析为工具名 (缺 Action 字段时导致 is_valid 误判为 True)
 _RE_ACTION = re.compile(
     r"Action(?!\s*:?\s*Input\b)\s*:?\s*\*{0,2}\s*:?\s*`?([a-z_][a-z0-9_]*)`?",
@@ -74,12 +74,12 @@ _RE_ACTION_INPUT = re.compile(
     r"Action\s*Input\s*:\s*(.*?)(?=\n\s*(?:Thought|Action|Final\s*Answer|Observation)\s*:|\Z)",
     re.IGNORECASE | re.DOTALL,
 )
-# Sprint 20: Action Input 别名 (LLM 偶尔输出 Input:/Args:/参数:/Parameters: 等)
+# Action Input 别名 (LLM 偶尔输出 Input:/Args:/参数:/Parameters: 等)
 _RE_ACTION_INPUT_ALT = re.compile(
     r"(?:Input|Args|Arguments|Parameters|Params|参数)\s*:\s*(.*?)(?=\n\s*(?:Thought|Action|Final\s*Answer|Observation)\s*:|\Z)",
     re.IGNORECASE | re.DOTALL,
 )
-# Sprint 20: 从任意文本中提取首个 JSON 对象 (fallback)
+# 从任意文本中提取首个 JSON 对象 (fallback)
 _RE_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 # 正则：Thought
 _RE_THOUGHT = re.compile(
@@ -88,13 +88,13 @@ _RE_THOUGHT = re.compile(
 )
 # markdown 代码块剔除
 _RE_CODE_FENCE = re.compile(r"^```(?:json)?\s*\n?|\n?```\s*$", re.MULTILINE)
-# Sprint 15 P6: LLM 经常在 Action Input 前后加 ** (markdown 加粗)
+# LLM 经常在 Action Input 前后加 ** (markdown 加粗)
 # 真实数据: action_input = "**\n{...}\n**" 触发 JSON 解析失败
 _RE_MD_BOLD = re.compile(r"^[\*_`]+|[\*_`]+$", re.MULTILINE)
 
 
 def _strip_code_fence(text: str) -> str:
-    """去除 JSON 周围的 ```json ... ``` 标记 + 前后 markdown 加粗符号 (Sprint 15 P6).
+    """去除 JSON 周围的 ```json ... ``` 标记 + 前后 markdown 加粗符号 ().
 
     LLM (deepseek-chat) 输出模式:
     ```
@@ -116,7 +116,7 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _strip_markdown_artifacts(action: str) -> str:
-    r"""去除 Action 字段中 LLM 加的 Markdown 装饰 (Sprint 14 P4 修复).
+    r"""去除 Action 字段中 LLM 加的 Markdown 装饰 (修复).
 
     背景: LLM (deepseek-chat) 经常输出 **Action:** ssh_exec 格式,
     regex Action\s*:\s*([^\s\n]+) 会捕获到 ** (因为 * 不是空白),
@@ -159,7 +159,7 @@ def parse_llm_output(text: str) -> ParsedAction:
     thought_match = _RE_THOUGHT.search(text)
     thought = thought_match.group(1).strip() if thought_match else ""
 
-    # Sprint 20: Thought 回退 — LLM (deepseek-v4-flash) 经常省略 "Thought:" 前缀
+    # Thought 回退 — LLM (deepseek-v4-flash) 经常省略 "Thought:" 前缀
     # 直接输出 "Action: ..." 导致 thought 为空, agent 无推理盲动.
     # 回退策略: 若无 "Thought:" 前缀, 取 "Action:"/"Final Answer:" 前的文本作为 thought.
     # 要求: Action:/Final Answer: 前必须有换行 + 至少 1 字符, 避免纯 Action 文本被误抓.
@@ -187,10 +187,10 @@ def parse_llm_output(text: str) -> ParsedAction:
     # Action + Action Input
     action_match = _RE_ACTION.search(text)
     input_match = _RE_ACTION_INPUT.search(text)
-    # Sprint 20: 别名回退 (Input:/Args:/参数: 等)
+    # 别名回退 (Input:/Args:/参数: 等)
     if not input_match:
         input_match = _RE_ACTION_INPUT_ALT.search(text)
-    # Sprint 20: 若 Action 匹配但 Action Input 仍缺, 尝试从 Action 行后提取首个 JSON 对象
+    # 若 Action 匹配但 Action Input 仍缺, 尝试从 Action 行后提取首个 JSON 对象
     # 适用场景: LLM 输出 "Action: http_request\n{"url":"..."}" 漏写 "Action Input:" 前缀
     if action_match and not input_match:
         json_match = _RE_JSON_OBJECT.search(text)
@@ -201,7 +201,7 @@ def parse_llm_output(text: str) -> ParsedAction:
             stub.group = lambda _i=1: json_match.group(0)
             input_match = stub
     if action_match and input_match:
-        # Sprint 14 P4: strip Markdown artifacts from action
+        # strip Markdown artifacts from action
         # LLM (deepseek-chat) 经常输出 `**Action:** ssh_exec`,
         # regex 捕获 `**` 当 action. rstrip 末尾的 * / ` / : 修复.
         action = _strip_markdown_artifacts(action_match.group(1).strip())
@@ -310,18 +310,18 @@ class ReActEngine:
         skip_hyde: bool = False,
         breaker: CircuitBreaker | None = None,
         on_step: Callable[[ReActStep], None] | None = None,
-        failed_cache: FailedTrajectoryCache | None = None,  # Sprint 10
-        challenge_id: str | None = None,  # Sprint 10: 用于失败记忆检索
-        challenge_type: str | None = None,  # Sprint 10 阶段 1.3: cross-challenge 知识共享
-        challenge_difficulty: str | None = None,  # Sprint 10 阶段 1.3
-        skill_library: Any = None,  # Sprint 15: 持续学习 Skill 库，注入相关技能
-        planner: Any = None,  # Sprint 16 P12: 任务拆解 (CHAP Planner)
-        force_max_thinking: bool = False,  # Sprint 26: 重试时强制 max 思考强度
-        # Sprint 26: 多次提交机制 — 找到答案后通过 callback 提交, 失败则继续循环
+        failed_cache: FailedTrajectoryCache | None = None,  # 
+        challenge_id: str | None = None,  # 用于失败记忆检索
+        challenge_type: str | None = None,  # 阶段 1.3: cross-challenge 知识共享
+        challenge_difficulty: str | None = None,  # 阶段 1.3
+        skill_library: Any = None,  # 持续学习 Skill 库，注入相关技能
+        planner: Any = None,  # 任务拆解 (CHAP Planner)
+        force_max_thinking: bool = False,  # 重试时强制 max 思考强度
+        # 多次提交机制 — 找到答案后通过 callback 提交, 失败则继续循环
         submission_handler: Callable[[str], tuple[bool, str]] | None = None,
-        max_submissions: int = 1,  # Sprint 26: 单轮最大提交次数
-        coordinator: Any = None,  # Sprint 27: 巡查指导器
-        on_coordinator: Callable[[Any, int], None] | None = None,  # Sprint 29: 巡查日志回调
+        max_submissions: int = 1,  # 单轮最大提交次数
+        coordinator: Any = None,  # 巡查指导器
+        on_coordinator: Callable[[Any, int], None] | None = None,  # 巡查日志回调
     ) -> None:
         self.llm = llm
         self._original_tools = list(tools)
@@ -339,34 +339,34 @@ class ReActEngine:
         # 熔断器：未提供时使用默认配置（30 分钟超时 + 重复动作 + 思维死锁检测）
         self.breaker = breaker if breaker is not None else CircuitBreaker()
         self._on_step = on_step
-        # Sprint 10: 失败轨迹缓存 (默认全局单例)
+        # 失败轨迹缓存 (默认全局单例)
         self._failed_cache = failed_cache or get_default_cache()
         self._challenge_id = challenge_id
-        # Sprint 10 阶段 1.3: cross-challenge 知识共享
+        # 阶段 1.3: cross-challenge 知识共享
         self._challenge_type = challenge_type
         self._challenge_difficulty = challenge_difficulty
-        # Sprint 15: 持续学习 Skill 库（可选），解题时注入相关技能作为指引
+        # 持续学习 Skill 库（可选），解题时注入相关技能作为指引
         self._skill_library = skill_library
-        # Sprint 16 P12: Planner 拆解任务 (CHAP 协议)
+        # Planner 拆解任务 (CHAP 协议)
         self._planner = planner
         self._planner_plan_text: str = ""  # Planner 拆解结果 (注入到 system prompt)
-        self._force_max_thinking = force_max_thinking  # Sprint 26: 重试强制 max
-        # Sprint 26: 多次提交机制
+        self._force_max_thinking = force_max_thinking  # 重试强制 max
+        # 多次提交机制
         self._submission_handler = submission_handler
         self._max_submissions = max(1, max_submissions)
-        self._coordinator = coordinator  # Sprint 27: 巡查指导器
-        self._coordinator_guidance = ""   # Sprint 27: 当前巡查指导 (注入下一步 prompt)
-        # Sprint 32.4: MUST 指导持久注入 — 重复注入剩余次数
-        # (#2501 复盘: 协调器 step10 的 MUST 只注入 1 次, agent 忽略后无强制力.
+        self._coordinator = coordinator  # 巡查指导器
+        self._coordinator_guidance = ""   # 当前巡查指导 (注入下一步 prompt)
+        # MUST 指导持久注入 — 重复注入剩余次数
+        # (历史复盘: 协调器 step10 的 MUST 只注入 1 次, agent 忽略后无强制力.
         #  现在 MUST 指导连续注入 must_repeat 步, 且与禁忌拦截配合形成闭环)
         self._must_repeat_left = 0
-        self._on_coordinator = on_coordinator  # Sprint 29: 巡查日志回调
+        self._on_coordinator = on_coordinator  # 巡查日志回调
         self._submitted_flags: set[str] = set()  # 已提交 flag 去重
         self._submission_count = 0  # 已提交次数
         self.status: TaskStatus = TaskStatus()
 
     def _thinking_extra(self) -> dict[str, Any] | None:
-        """Sprint 26: 按难度+题型选择 reasoning_effort, 通过 extra 传给 LLM.
+        """按难度+题型选择 reasoning_effort, 通过 extra 传给 LLM.
 
         判断优先级 (从高到低):
         1. force_max_thinking=True (重试场景, 第一次失败后强制 max)
@@ -405,7 +405,7 @@ class ReActEngine:
             return {"reasoning_effort": settings.thinking_effort_hard if diff == "hard" else settings.thinking_effort_extreme}
 
         # 优先级 3: medium + 深度分析题型 → max
-        # Sprint 27: misc 加入 max (实测 #2428 misc/medium 用 max 进度更快)
+        # misc 加入 max (实测 misc/medium 用 max 进度更快)
         # reverse/pwn: 逆向/漏洞利用需深度推理; crypto: 密码分析需数学推理; misc: 常有嵌套解密链
         if diff == "medium" and ctype in ("reverse", "re", "pwn", "crypto", "misc"):
             return {"reasoning_effort": "max"}
@@ -430,7 +430,7 @@ class ReActEngine:
         Returns:
             ReActResult，success=True 时 final_answer 非空
 
-        Sprint 10: 失败时自动存储到 failed_cache, 第二次跑同 challenge_id 时
+        失败时自动存储到 failed_cache, 第二次跑同 challenge_id 时
         通过 _inject_context() 注入失败历史提示。
         """
         try:
@@ -440,7 +440,7 @@ class ReActEngine:
             raise
 
     def _run_inner(self, task: str) -> ReActResult:
-        """run() 的实际实现 (Sprint 10 拆分以支持失败 cache 存储)."""
+        """run() 的实际实现 (拆分以支持失败 cache 存储)."""
         # 任务 ID：用户指定或自动生成（用于中期记忆索引）
         task_id = self._user_task_id or uuid4().hex[:12]
 
@@ -451,7 +451,7 @@ class ReActEngine:
             self.tools = {t.name: t for t in extended}
         # 否则保持 __init__ 中的 self.tools
 
-        # Sprint 16 P12: Planner 拆解任务 (CHAP 协议)
+        # Planner 拆解任务 (CHAP 协议)
         # 拆解结果格式化为"作战计划"文本, 注入到 system prompt
         # 注意: Planner 失败时静默降级, 不阻断主流程
         if self._planner is not None:
@@ -465,7 +465,7 @@ class ReActEngine:
                 self._planner_plan_text = ""
 
         # 基础 system prompt（用户覆盖 or 基于工具集生成）
-        # Sprint 16 P11-3: 透传 task + challenge_type + difficulty 用于 Skill 注入
+        # 透传 task + challenge_type + difficulty 用于 Skill 注入
         base_system_prompt = self._user_system_prompt or build_system_prompt(
             list(self.tools.values()),
             task=task,
@@ -502,19 +502,19 @@ class ReActEngine:
         raw_outputs: list[str] = []
         total_tokens = 0
         consecutive_format_errors = 0
-        # Sprint 6 P0: 跟踪连续空 observation 次数（含"模型端空输出"与"obs 端空"）
+        # 跟踪连续空 observation 次数（含"模型端空输出"与"obs 端空"）
         consecutive_null_obs = 0
-        # Sprint 7 P0-1: 模型端空输出"免费重答"配额（注入恢复 hint 但不计入 format_errors）
+        # 模型端空输出"免费重答"配额（注入恢复 hint 但不计入 format_errors）
         consecutive_empty_outputs = 0
         max_empty_outputs_before_breaker = 2  # 连续 2 次仍空才计入 format_errors
 
-        # Sprint 32.4b: 修复加步 (extend_steps) 从未生效的 bug —
+        # 修复加步 (extend_steps) 从未生效的 bug —
         # 之前 `for step_no in range(1, self.max_steps + 1)` 的 range 在进入
         # 循环时一次性求值, 即使协调器 extend_steps 更新了 self.max_steps
         # (self.max_steps = self.breaker.max_steps), for 循环也不会延长,
-        # 方向正确的 agent 到原上限就被硬杀 (#2501 复盘: 协调器建议加步
+        # 方向正确的 agent 到原上限就被硬杀 (历史复盘: 协调器建议加步
         # 但实际无效果).
-        # Sprint 32.4b2 (用户要求: 尽量不做严格硬截断, 优先 LLM 软截断):
+        # (用户要求: 尽量不做严格硬截断, 优先 LLM 软截断):
         # 改为 while True + 进展感知软截断 —
         # - 每步动态判断 max_steps (extend_steps 立即生效)
         # - 超过 max_steps 后不立即硬停, 由 breaker 进展感知决定:
@@ -533,7 +533,7 @@ class ReActEngine:
             self.status.step_count = step_no
             step_timestamp = time.monotonic()
 
-            # Sprint 26: 检查调用器 stop 信号 (每步开始前)
+            # 检查调用器 stop 信号 (每步开始前)
             # 使用独立模块 ctf_agent.stop_signal 避免循环导入 (solve ↔ react)
             try:
                 from ctf_agent.stop_signal import is_stop_requested
@@ -552,7 +552,7 @@ class ReActEngine:
             except Exception:
                 pass  # 非子进程模式 (直接调用), 无 stop 信号检查
 
-            # Sprint 27: 巡查指导器 — 每 10/15 步巡查一次 (LLM 驱动的智能旁观者)
+            # 巡查指导器 — 每 10/15 步巡查一次 (LLM 驱动的智能旁观者)
             if self._coordinator is not None and self._coordinator.should_check(step_no, self.max_steps):
                 try:
                     # 构造轨迹数据给 coordinator 分析 (含 observation, 供 LLM 深度分析)
@@ -575,10 +575,10 @@ class ReActEngine:
                         max_steps=self.max_steps,
                     )
                     if guidance.should_intervene:
-                        # Sprint 31: 添加 [MUST]/[SHOULD] 标记和禁忌列表
+                        # 添加 [MUST]/[SHOULD] 标记和禁忌列表
                         priority_tag = f"[{guidance.priority}] " if guidance.priority == "MUST" else ""
                         self._coordinator_guidance = priority_tag + guidance.guidance
-                        # Sprint 32.4: MUST 指导持久注入 — 连续重复 must_repeat 步
+                        # MUST 指导持久注入 — 连续重复 must_repeat 步
                         # (确保 agent 真正执行, 而非注入一次被忽略)
                         if guidance.priority == "MUST":
                             self._must_repeat_left = 2  # 本步 + 后续 2 步 = 3 次注入
@@ -590,18 +590,18 @@ class ReActEngine:
                             self._coordinator_guidance += forbidden_text
                     else:
                         self._coordinator_guidance = ""
-                    # Sprint 32.4c: 巡查器自我纠错 — 撤销被后续轨迹证伪的上次指导
+                    # 巡查器自我纠错 — 撤销被后续轨迹证伪的上次指导
                     # (react 侧只需停止旧 MUST 的持久重复注入; 若本次干预, 新指导已替换旧指导)
                     if guidance.revert_guidance:
                         self._must_repeat_left = 0
-                    # Sprint 32: extend_steps 处理移到 if/else 外, 干预时也执行
+                    # extend_steps 处理移到 if/else 外, 干预时也执行
                     # (之前只在沉默时处理, 导致接近上限+干预时永远不扩展)
                     if guidance.extend_steps and self.breaker is not None:
                         if hasattr(self.breaker, "extend_steps"):
                             extended = self.breaker.extend_steps()
                             if extended:
                                 self.max_steps = self.breaker.max_steps
-                    # Sprint 29: 输出巡查日志 (无论是否干预, 都记录分析结果)
+                    # 输出巡查日志 (无论是否干预, 都记录分析结果)
                     if self._on_coordinator is not None:
                         try:
                             self._on_coordinator(guidance, step_no)
@@ -619,8 +619,8 @@ class ReActEngine:
                     )
                 )
 
-            # Sprint 27: 注入巡查指导 (如果有)
-            # Sprint 32.4: MUST 指导持久注入 — 未执行完之前持续重复强调
+            # 注入巡查指导 (如果有)
+            # MUST 指导持久注入 — 未执行完之前持续重复强调
             if self._coordinator_guidance:
                 if self._must_repeat_left > 0:
                     # MUST 指导重复注入, 强调强制执行
@@ -635,7 +635,7 @@ class ReActEngine:
                     memory.add_user_message(self._coordinator_guidance)
                     self._coordinator_guidance = ""  # 用完即清
 
-            # Sprint 28: 做题中动态检索 skill (每 8 步, 基于累积 observation)
+            # 做题中动态检索 skill (每 8 步, 基于累积 observation)
             # 当 agent 收集到足够线索后, 用线索文本匹配 pattern_features,
             # 找出套路相同的 skill 并注入提示 (基于套路而非题目名称匹配)
             if (
@@ -660,8 +660,8 @@ class ReActEngine:
                     pass
 
             # LLM 推理（每次从短期记忆获取裁剪后的消息列表）
-            # Sprint 26: 按难度注入 reasoning_effort (thinking_mode)
-            # Sprint 32.8: LLM 调用异常容错 — 中途 API 故障不能整题 0 步失败:
+            # 按难度注入 reasoning_effort (thinking_mode)
+            # LLM 调用异常容错 — 中途 API 故障不能整题 0 步失败:
             #   flash 失败 → 重试 → pro 降级 → 仍失败则注入提示跳过本步继续 (不崩溃)
             try:
                 chat_result = self.llm.chat(
@@ -711,11 +711,11 @@ class ReActEngine:
 
             # 终止：Final Answer
             if parsed.is_final:
-                # Sprint 17 + Sprint 22.5: 反幻觉兜底 — 无任何工具调用直接 Final = 幻觉
+                # + 反幻觉兜底 — 无任何工具调用直接 Final = 幻觉
                 # (Triplet_Tweak 根因: LLM 未读附件直接猜答案;
-                #  Sprint 22.5: hard_r2 复现 — 第 2 步无工具调用直接 Final 编造 flag)
+                #  hard_r2 复现 — 第 2 步无工具调用直接 Final 编造 flag)
                 # 拒绝并注入 hint 让 LLM 先收集信息 (所有题型强制 ≥1 次工具调用)
-                # Sprint 23: 排除 is_error 的步骤 (action_input JSON 解析失败不算有效工具调用)
+                # 排除 is_error 的步骤 (action_input JSON 解析失败不算有效工具调用)
                 if not any(s.action and not s.is_error for s in steps):
                     memory.add_round(
                         chat_result.content,
@@ -738,7 +738,7 @@ class ReActEngine:
                 steps.append(step)
                 self._notify(step)
 
-                # Sprint 26: 多次提交机制 — 找到答案后通过 callback 提交, 失败则继续循环
+                # 多次提交机制 — 找到答案后通过 callback 提交, 失败则继续循环
                 flag_candidate = parsed.final_answer.strip()
                 if self._submission_handler is not None:
                     # 去重检查: 已提交过的答案直接驳回
@@ -755,7 +755,7 @@ class ReActEngine:
                         step_no += 1
                         continue
 
-                    # Sprint 28: 提交次数上限检查 — 不直接退出, 继续循环分析
+                    # 提交次数上限检查 — 不直接退出, 继续循环分析
                     # 用户要求: 即使连续提交 20 次错误答案也不要直接退出
                     # 机制: 达上限后不再调用 submission_handler, 注入指导让 agent 继续工具分析
                     # 安全保护: increment consecutive_format_errors, 防止 agent 反复 Final Answer 死循环
@@ -821,7 +821,7 @@ class ReActEngine:
 
                 # 无 submission_handler (传统模式) 或 max_submissions=1 → 直接成功
                 self.status.mark_done(parsed.final_answer)
-                # Sprint 10 阶段 1.2: 成功后清理失败历史(避免成功解出后再次跑时还注入旧的失败提示)
+                # 阶段 1.2: 成功后清理失败历史(避免成功解出后再次跑时还注入旧的失败提示)
                 self._clear_failed_if_solved()
                 return ReActResult(
                     success=True,
@@ -836,7 +836,7 @@ class ReActEngine:
 
             # 解析失败处理
             if not parsed.is_valid:
-                # Sprint 7 P0-1 修复：区分"模型端空输出"与"格式错乱"
+                # 修复：区分"模型端空输出"与"格式错乱"
                 # 场景：模型连续返回空字符串/无 Thought+Action+Input
                 # 旧实现会直接计入 format_errors 触发熔断；
                 # 新实现给"空输出"2 次免费重答机会（注入恢复 hint），超过才计入 format_errors
@@ -947,8 +947,8 @@ class ReActEngine:
             consecutive_format_errors = 0
             consecutive_empty_outputs = 0
 
-            # Sprint 32.4: 禁忌操作拦截 — 工具执行前检查协调器禁忌列表
-            # (#2501 复盘: 协调器 step10 否定 MD5 爆破假设, 但 agent 继续 20 步.
+            # 禁忌操作拦截 — 工具执行前检查协调器禁忌列表
+            # (历史复盘: 协调器 step10 否定 MD5 爆破假设, 但 agent 继续 20 步.
             #  现在确认无效的操作在巡查间隔之外也被立即拦截, 不再浪费步数)
             if self._coordinator is not None and hasattr(self._coordinator, "intercept_forbidden"):
                 try:
@@ -976,7 +976,7 @@ class ReActEngine:
             steps.append(step)
             self._notify(step)
 
-            # Sprint 17: range_control verify 成功后立即 Final Answer (避免 Cache_Footprint 10min 问题)
+            # range_control verify 成功后立即 Final Answer (避免 Cache_Footprint 10min 问题)
             # 当 observation 包含 "Flag verified" / "verify: True" 等成功标志时, 自动终止
             if parsed.action == "range_control" and "verify" in parsed.action_input.lower():
                 obs_lower = (observation.output or "").lower()
@@ -996,7 +996,7 @@ class ReActEngine:
                         task=task,
                     )
 
-            # Sprint 6 P0: 空 observation 检测与兜底
+            # 空 observation 检测与兜底
             obs_text = observation.output or ""
             obs_is_empty = (
                 not obs_text.strip()
@@ -1037,7 +1037,7 @@ class ReActEngine:
                 OBSERVATION_TEMPLATE.format(observation=obs_text),
             )
 
-            # Sprint 32.4b: while True 循环每步末尾手动递增步数
+            # while True 循环每步末尾手动递增步数
             step_no += 1
 
         # 超出步数 (无进展兜底退出)
@@ -1051,9 +1051,9 @@ class ReActEngine:
         )
 
     def _store_failed_if_needed(self, result: ReActResult) -> None:
-        """Sprint 10: 失败时存储 trajectory 到 failed_cache.
+        """失败时存储 trajectory 到 failed_cache.
 
-        Sprint 10 Stage 10: 存储后自动触发 reflect() 生成反思,
+        Stage 10: 存储后自动触发 reflect() 生成反思,
         下次跑同 challenge_id 时通过 _inject_context() 注入反思提示。
         """
         if result.success:
@@ -1068,7 +1068,7 @@ class ReActEngine:
                 fail_reason=result.fail_reason,
                 success=False,
             )
-            # Sprint 10 Stage 10: 自动反思 (失败即触发, 无额外 LLM 调用)
+            # Stage 10: 自动反思 (失败即触发, 无额外 LLM 调用)
             self._failed_cache.reflect(
                 challenge_id=self._challenge_id,
                 ch_type=self._challenge_type or "",
@@ -1079,7 +1079,7 @@ class ReActEngine:
             pass
 
     def _clear_failed_if_solved(self) -> None:
-        """Sprint 10 阶段 1.2: 成功后清理该 challenge 的失败历史.
+        """阶段 1.2: 成功后清理该 challenge 的失败历史.
 
         设计原因: 一旦某题成功解出, 历史失败提示不再有意义,
         保留反而会污染未来重跑 (例如回归测试/题库更新后重跑).
@@ -1101,7 +1101,7 @@ class ReActEngine:
         started_at: float,
         task: str,
     ) -> ReActResult:
-        """Sprint 10: 创建失败 ReActResult + 自动存储到 failed_cache."""
+        """创建失败 ReActResult + 自动存储到 failed_cache."""
         self.status.mark_failed(reason)
         result = ReActResult(
             success=False,
@@ -1118,7 +1118,7 @@ class ReActEngine:
 
     @staticmethod
     def _format_plan(subtasks: list) -> str:
-        """Sprint 16 P12: 将 Planner 拆解的子任务格式化为"作战计划"文本.
+        """将 Planner 拆解的子任务格式化为"作战计划"文本.
 
         注入到 system prompt, 让 LLM 在自主解题时有明确参考计划.
         关键: 标注"参考而非约束", 避免 LLM 机械执行 (违反自主解题目标).
@@ -1153,12 +1153,12 @@ class ReActEngine:
 
         无对应记忆或无内容时跳过对应部分。
 
-        Sprint 10: 追加失败轨迹 hint (从 failed_cache 读取).
-        Sprint 10 阶段 1.3: 追加 (type, difficulty) 级别的通用解题提示.
-        Sprint 10 Stage 10: 追加演化反思提示 (失败模式 + 工具建议).
+        追加失败轨迹 hint (从 failed_cache 读取).
+        阶段 1.3: 追加 (type, difficulty) 级别的通用解题提示.
+        Stage 10: 追加演化反思提示 (失败模式 + 工具建议).
         """
         parts: list[str] = [base_prompt]
-        # Sprint 16 P12: Planner 拆解结果作为"作战计划"注入
+        # Planner 拆解结果作为"作战计划"注入
         if self._planner_plan_text:
             parts.append(self._planner_plan_text)
         if self._mid_term is not None:
@@ -1167,7 +1167,7 @@ class ReActEngine:
                 parts.append(facts_text)
         if rag_context:
             parts.append(rag_context)
-        # Sprint 10 阶段 1.3: (type, difficulty) 通用提示
+        # 阶段 1.3: (type, difficulty) 通用提示
         if (
             self._challenge_type
             and self._challenge_difficulty
@@ -1178,12 +1178,12 @@ class ReActEngine:
             )
             if type_hint:
                 parts.append(type_hint)
-        # Sprint 10: 失败轨迹提示
+        # 失败轨迹提示
         if self._challenge_id and self._failed_cache is not None:
             fail_hint = self._failed_cache.format_hint(self._challenge_id)
             if fail_hint:
                 parts.append(fail_hint)
-        # Sprint 10 Stage 10: 演化反思提示
+        # Stage 10: 演化反思提示
         if self._challenge_id and self._failed_cache is not None:
             ref_hint = self._failed_cache.format_reflection_hint(
                 self._challenge_id,
@@ -1192,7 +1192,7 @@ class ReActEngine:
             )
             if ref_hint:
                 parts.append(ref_hint)
-        # Sprint 15: 持续学习——注入相关 Skill（过往积累的解题套路/工具用法）
+        # 持续学习——注入相关 Skill（过往积累的解题套路/工具用法）
         if self._skill_library is not None:
             try:
                 query = task or self._challenge_type or ""

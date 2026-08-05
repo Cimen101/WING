@@ -74,7 +74,7 @@ class WebFingerprintTool(_KaliBackedTool):
     parameters = {
         "type": "object",
         "properties": {
-            "url": {"type": "string", "description": "目标 URL，如 http://127.0.0.1:1337/"},
+            "url": {"type": "string", "description": "目标 URL，如 http://127.0.0.1/"},
         },
         "required": ["url"],
     }
@@ -97,7 +97,7 @@ class WebDirScanTool(_KaliBackedTool):
     parameters = {
         "type": "object",
         "properties": {
-            "url": {"type": "string", "description": "目标基址，如 http://127.0.0.1:1337/"},
+            "url": {"type": "string", "description": "目标基址，如 http://127.0.0.1/"},
             "wordlist": {
                 "type": "string",
                 "description": "字典路径，默认 /usr/share/wordlists/dirb/common.txt",
@@ -197,7 +197,7 @@ class WebReconTool(_KaliBackedTool):
     parameters = {
         "type": "object",
         "properties": {
-            "url": {"type": "string", "description": "目标基址，如 http://127.0.0.1:1337/"},
+            "url": {"type": "string", "description": "目标基址，如 http://127.0.0.1/"},
         },
         "required": ["url"],
     }
@@ -238,7 +238,7 @@ class WebReconTool(_KaliBackedTool):
 
 
 class WebSqliTool(_KaliBackedTool):
-    """Sprint 19 v5: 专用 SQL 注入工具 (CTF 优化版).
+    """v5: 专用 SQL 注入工具 (CTF 优化版).
 
     比 sqlmap 更简化的接口, 自动处理空格过滤/注释符/UNION 注入等 CTF 常见场景.
     遇到 SQL 报错、搜索框、id 参数时优先使用此工具.
@@ -309,7 +309,7 @@ def web_tools(ssh_client: SSHClient) -> list[Tool]:
         WebFingerprintTool(ssh_client),
         WebDirScanTool(ssh_client),
         SqlmapTool(ssh_client),
-        WebSqliTool(ssh_client),  # Sprint 19 v5: CTF SQL 注入专用
+        WebSqliTool(ssh_client), # v5: CTF SQL 注入专用
     ]
 
 

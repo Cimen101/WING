@@ -200,7 +200,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         from ctf_agent.bus.message_bus import get_default_bus
         tools = default_tools(ssh_client=ssh_client,
                               message_bus=get_default_bus(), agent_id="agent")
-        # Sprint 15: 持续学习——加载 Skill 库，解题时注入过往积累的套路/工具用法
+        # 持续学习——加载 Skill 库，解题时注入过往积累的套路/工具用法
         try:
             from ctf_agent.memory import SkillLibrary
 
@@ -260,7 +260,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     console.print(format_result_summary(result))
 
-    # Sprint 15: 持续学习——从本次解题过程提炼可复用 skill（writeup 的结构化升级）
+    # 持续学习——从本次解题过程提炼可复用 skill（writeup 的结构化升级）
     if "skill_library" in locals() and skill_library is not None:
         try:
             from ctf_agent.skill_learner import learn_skill
@@ -278,7 +278,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         except Exception:  # noqa: BLE001
             pass
 
-    # Sprint 16: 经验闭环——成功解题去标识化后写入长期记忆（LTM），使 RAG
+    # 经验闭环——成功解题去标识化后写入长期记忆（LTM），使 RAG
     # 能在后续同类题开局检索到"自己解过的题"，实现知识库自增长（flag 已隐去）。
     if result.success:
         try:

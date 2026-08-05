@@ -1,4 +1,4 @@
-"""L2 OCR 工具 (Sprint 12 M3.5 新增, Sprint 13 增强).
+"""L2 OCR 工具 (新增, 增强).
 
 封装 Kali 上预装的 Tesseract OCR 引擎为 Tool 接口:
 - OcrTool: 提取图片中的文字 (支持多语言: eng/rus/chi_sim/chi_tra/jpn 等)
@@ -8,7 +8,7 @@
 - Tesseract 5.5.0+ 已支持 100+ 语言
 - 输出截断避免 LLM 上下文污染
 - 自动检测可用性, 未装则降级提示
-- Sprint 13 增强: 检测"假阳性"输出 (如 "Estimating resolution as 381" / "Tesseract Open Source")
+- 增强: 检测"假阳性"输出 (如 "Estimating resolution as 381" / "Tesseract Open Source")
   标记为 `no_text_detected`, 避免 LLM 误用做搜索 query
 
 使用场景:
@@ -30,7 +30,7 @@ _MAX_OUTPUT = 4000
 _TRUNCATED_SUFFIX = "\n... (输出截断,共 {total} 字符)"
 
 
-# Sprint 13 P0: OCR 假阳性检测 — 标记"非真实文字"输出
+# OCR 假阳性检测 — 标记"非真实文字"输出
 # 这些是 tesseract 在无文字时的内部日志/状态, 不是真实 OCR 结果
 _OCR_FALSE_POSITIVES = [
     re.compile(r"^\s*Estimating resolution as \d+\s*$", re.MULTILINE),
@@ -45,7 +45,7 @@ _MIN_REAL_TEXT_CHARS = 20
 
 
 def _is_likely_no_text(text: str) -> bool:
-    """Sprint 13 P0: 判断 OCR 输出是否为"无文字"假阳性.
+    """判断 OCR 输出是否为"无文字"假阳性.
 
     Returns:
         True: 输出只是 tesseract 内部日志/状态, 无真实文字
@@ -95,7 +95,7 @@ def _check_tool(ssh: SSHClient, tool_name: str) -> bool:
 
 
 class OcrTool(Tool):
-    """Tesseract OCR 文字提取 (Sprint 12 M3.5).
+    """Tesseract OCR 文字提取 ().
 
     用途: 从图片/JPEG/PNG/PDF 中提取文字.
     适用: OSINT 图片题 (有标志/路牌/文字线索), forensics 截图分析.
@@ -197,7 +197,7 @@ class OcrTool(Tool):
                 f"或用 LLM 知识推理 (OSINT 抽象图用 osm_geocode 拿坐标)."
             )
 
-        # Sprint 13 P0: 检测假阳性 (如 "Estimating resolution as 381" 是 tesseract 内部状态, 不是真实文字)
+        # 检测假阳性 (如 "Estimating resolution as 381" 是 tesseract 内部状态, 不是真实文字)
         if _is_likely_no_text(actual):
             return (
                 f"[NO_TEXT_DETECTED] Sprint 13 P0: OCR 未提取出真实文字 (只输出 {len(actual)} 字符 tesseract 内部日志).\n"
@@ -234,7 +234,7 @@ class OcrTool(Tool):
 
 
 def ocr_tool(ssh_client: SSHClient) -> list[Tool]:
-    """创建 OCR 工具 (Sprint 12 M3.5).
+    """创建 OCR 工具 ().
 
     Args:
         ssh_client: 已连接的 SSHClient 实例

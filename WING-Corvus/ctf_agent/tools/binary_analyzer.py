@@ -1,4 +1,4 @@
-"""Sprint 8: binary_analyzer 模块 - L2.5 高级二进制分析.
+"""binary_analyzer 模块 - L2.5 高级二进制分析.
 
 背景:
   v3 测试中 3 道 hard 题全失败（Triplet/SCADA/Simple_Calculator），主因是
@@ -71,7 +71,7 @@ class ConstantInfo:
     type: str  # "string" / "byte_seq" / "number"
 
 
-# ============ XOR 候选位置标记 (Sprint 9 阶段 2 增强) ============
+# ============ XOR 候选位置标记 (阶段 2 增强) ============
 
 # 常见 flag 模式（用于校验 XOR 解密结果）
 _FLAG_RESULT_PATTERNS = [
@@ -99,7 +99,7 @@ class XorKey:
 
 @dataclass
 class XorHint:
-    """XOR 解密候选位置 (Sprint 9 阶段 2 增强).
+    """XOR 解密候选位置 (阶段 2 增强).
 
     Attributes:
         segment: 段名（如 ".rdata" / ".data" / ".text"）
@@ -109,7 +109,7 @@ class XorHint:
         preview: 解密前几个字节的十六进制表示（用于 LLM 快速预览）
         reason: 推测原因（如"包含 flag_like 字符串 KEY42"）
         confidence: 该 hint 的整体置信度
-        decrypted_preview: 解密后明文 (Sprint 9 阶段 2.5 增强: 直接给 LLM 看 flag)
+        decrypted_preview: 解密后明文 (阶段 2.5 增强: 直接给 LLM 看 flag)
     """
     segment: str
     offset: int
@@ -118,7 +118,7 @@ class XorHint:
     preview: str = ""
     reason: str = ""
     confidence: float = 0.0
-    decrypted_preview: str = ""  # Sprint 9.5: 解密后明文片段 (含 flag)
+    decrypted_preview: str = ""  # 解密后明文片段 (含 flag)
 
 
 @dataclass
@@ -134,15 +134,15 @@ class BinaryAnalysisResult:
     cfg_summary: CFGSummary = field(default_factory=CFGSummary)
     constants: list[ConstantInfo] = field(default_factory=list)
     flag_candidates: list[str] = field(default_factory=list)  # 高优先级 flag-like 字符串
-    xor_hints: list[XorHint] = field(default_factory=list)  # Sprint 9: XOR 候选位置
+    xor_hints: list[XorHint] = field(default_factory=list)  # XOR 候选位置
     backend_used: str = ""  # "ghidra" / "radare2" / "objdump" / "unknown"
     analysis_time: float = 0.0
     error: str = ""
-    text_dump_hint: str = ""  # Sprint 10: .txt 内存 dump 引导信息
+    text_dump_hint: str = ""  # .txt 内存 dump 引导信息
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        # Sprint 9: bytes 转 hex 字符串, JSON 可序列化
+        # bytes 转 hex 字符串, JSON 可序列化
         for h in d.get("xor_hints", []):
             for k in h.get("key_candidates", []):
                 if isinstance(k.get("key_bytes"), bytes):
@@ -162,7 +162,7 @@ class BinaryAnalysisResult:
             f"Backend: {self.backend_used}",
             f"Analysis time: {self.analysis_time:.2f}s",
         ]
-        # Sprint 10: text_dump 引导信息优先显示
+        # text_dump 引导信息优先显示
         if self.text_dump_hint:
             lines.append(self.text_dump_hint)
             return "\n".join(lines)
@@ -201,7 +201,7 @@ class BinaryAnalysisResult:
                     f"  [{h.segment} @ 0x{h.offset:x}, len={h.length}] "
                     f"keys=[{keys}] conf={h.confidence:.2f} | {h.reason}"
                 )
-                # Sprint 9.5: 显示解密后明文 (含 flag)
+                # 显示解密后明文 (含 flag)
                 if h.decrypted_preview:
                     lines.append(f"    Decrypted: {h.decrypted_preview[:200]}")
         return "\n".join(lines)
@@ -277,7 +277,7 @@ class BinaryAnalyzer:
             endian="",
         )
         try:
-            # Sprint 10: 显式 mode='text_dump' 提前返回,避免 LLM 走错路径
+            # 显式 mode='text_dump' 提前返回,避免 LLM 走错路径
             if mode == "text_dump":
                 self._handle_text_dump(result)
                 result.analysis_time = time.monotonic() - started
@@ -288,7 +288,7 @@ class BinaryAnalyzer:
             if result.error:
                 return result
 
-            # Sprint 10: auto 模式且检测到 .txt,提示 LLM 用 mem_xor_analyzer
+            # auto 模式且检测到 .txt,提示 LLM 用 mem_xor_analyzer
             if mode == "auto" and self._is_text_dump(result):
                 self._handle_text_dump(result)
                 result.analysis_time = time.monotonic() - started
@@ -316,7 +316,7 @@ class BinaryAnalyzer:
         return result
 
     def _is_text_dump(self, result: BinaryAnalysisResult) -> bool:
-        """判断文件是否为 .txt 格式内存 dump (Sprint 10).
+        """判断文件是否为 .txt 格式内存 dump ().
 
         判定条件 (任一满足):
         - file_type 包含 "ASCII text" 或 "UTF-8"
@@ -631,12 +631,12 @@ class BinaryAnalyzer:
             if any(kw in f.name.lower() for kw in KEY_FUNCS):
                 f.has_flag_string = True
 
-        # 3. Sprint 9 阶段 2: XOR 候选位置标记
+        # 3. 阶段 2: XOR 候选位置标记
         # 仅在有 r2 后端时执行（需要 sections 信息）
         if result.backend_used in ("radare2", "ghidra_fallback_to_r2", "ghidra"):
             self._detect_xor_hints(result)
 
-    # ---------- XOR 候选位置检测 (Sprint 9 阶段 2) ----------
+    # ---------- XOR 候选位置检测 (阶段 2) ----------
 
     # r2 iS 实际输出列: nth paddr size vaddr vsize perm flags type name
     # 例: 0   0x00000400  0xa00 0x100401000  0x1000 -r-x 0x60000060 ---- .text
@@ -732,13 +732,13 @@ class BinaryAnalyzer:
         window_size: int = 32,
         step: int = 16,
     ) -> tuple[float, str, bytes]:
-        """评估 XOR 解密结果质量 (Sprint 9 阶段 2 增强).
+        """评估 XOR 解密结果质量 (阶段 2 增强).
 
         策略:
         1. 尝试 xor-only 和 ror3+xor 两种算法
         2. 滑动窗口扫描, 任一窗口命中 flag 模式即得高分
         3. 这样能应对密文在段中任意位置 (如 SCADA .text 段 entry0 movabs)
-        4. Sprint 9 增强: 识别 movabs 立即数 (48 b? imm64), 提取 imm64 字节流单独解密
+        4. 增强: 识别 movabs 立即数 (48 b? imm64), 提取 imm64 字节流单独解密
 
         Args:
             encrypted: 加密字节流
@@ -777,7 +777,7 @@ class BinaryAnalyzer:
                 if pat.search(dec_text):
                     return 0.95, f"flag 模式命中 ({algo_name}, key={key!r})", decrypted
 
-            # 3. Sprint 9 增强: 识别 movabs 立即数 (48 b? imm64)
+            # 3. 增强: 识别 movabs 立即数 (48 b? imm64)
             # 在 .text 段中密文常作为 movabs 立即数嵌入, 滑动窗口因指令字节干扰
             # 无法命中. 此处提取所有 imm64 字节流作为密文再扫描 flag 模式.
             movabs_stream = self._extract_movabs_imm64(encrypted)
@@ -851,7 +851,7 @@ class BinaryAnalyzer:
         return bytes(out)
 
     def _detect_xor_hints(self, result: BinaryAnalysisResult) -> None:
-        """检测 XOR 加密候选位置 (Sprint 9 阶段 2).
+        """检测 XOR 加密候选位置 (阶段 2).
 
         策略:
         1. 提取 r2 sections (.rdata/.data 优先)
@@ -886,7 +886,7 @@ class BinaryAnalyzer:
                         key_candidates.append((val.encode(), f"flag_like_full:{val}", 0.6))
 
             # (b) 短 ASCII token (3-6 字节) - 从所有字符串中提取
-            # Sprint 9 增强: 不限于 flag_like, general 中含 KEY42 这类短大写 token 也要纳入
+            # 增强: 不限于 flag_like, general 中含 KEY42 这类短大写 token 也要纳入
             # 关键: 跳过太常见的 "WVSH" / "AUATH" 这类纯随机大写 (entropy 异常高)
             for s in result.strings:
                 val = s.value
@@ -921,7 +921,7 @@ class BinaryAnalyzer:
                 return
 
             # 3. 扫描所有段（除 .bss/.reloc 等噪声段）
-            # Sprint 9 增强: 也扫 .text 段 (有 movabs 立即数密文)
+            # 增强: 也扫 .text 段 (有 movabs 立即数密文)
             # 按 confidence 排序后取 top N
             EXCLUDED_SEGMENTS = {".bss", ".reloc", ".buildid"}
             MAX_HINTS = 8
@@ -1027,7 +1027,7 @@ class BinaryAnalyzer:
                 if best_score > 0.3 and best_key_data:
                     # 按 confidence 排序
                     best_key_data.sort(key=lambda k: -k.confidence)
-                    # Sprint 9.5: 提取解密文本 (含 flag 模式优先)
+                    # 提取解密文本 (含 flag 模式优先)
                     decrypted_text = best_decrypted.decode("utf-8", errors="replace")
                     # 优先显示含 flag 的 200 字节片段
                     flag_in_text = None

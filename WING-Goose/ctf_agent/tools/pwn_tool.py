@@ -175,7 +175,7 @@ class PwnExploitTool(_KaliBackedTool):
         "【PWN 打 exp】运行 pwntools 利用脚本。脚本里可直接用 pwn 库；"
         "若提供 binary/host/port，会在脚本前自动注入变量：ELF 对象 `e`、以及 "
         "`io`（host+port 时=remote，否则=process(binary)）。脚本末尾建议解析并打印 flag。"
-        "适合本地复现或打远程 127.0.0.1:1337。"
+        "适合本地复现或打远程 127.0.0.1。"
     )
     parameters = {
         "type": "object",

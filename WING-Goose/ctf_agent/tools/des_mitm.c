@@ -1,4 +1,4 @@
-// Sprint 14 P4 - des_cryptanalysis MITM C 加速
+// - des_cryptanalysis MITM C 加速
 // 24-bit sub-key 搜索 (与 Python MITM 一致, 提供 C 加速)
 //
 // 限制: 假设 sub_key 的高 8 位 = 0. 若实际 sub_key 高 8 位非 0 (SHA-256 keys 通常如此),
@@ -198,7 +198,7 @@ int main(int argc, char **argv) {
         c_arr[i] = strtoull(argv[2 + 2*i], NULL, 16) & 0xFFFFFFFFFFFFULL;
     }
 
-    fprintf(stderr, "=== des_mitm_main (Sprint 14 P4, 24-bit sub-key) ===\n");
+    fprintf(stderr, "=== des_mitm_main (24-bit sub-key) ===\n");
     fprintf(stderr, "  Pairs: %d\n", n_pairs);
     for (int i = 0; i < n_pairs; i++) {
         fprintf(stderr, "  Pair %d: m=0x%012llx, c=0x%012llx\n", i+1,

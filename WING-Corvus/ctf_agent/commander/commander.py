@@ -1,4 +1,4 @@
-"""Sprint 36 (WING-Corvus): 总指挥 (Commander) — 全局协作指挥.
+"""总指挥 (Commander) — 全局协作指挥.
 
 三层协作小队 (Coordinated Squad) 的顶层:
 - 领题时按风格差异分配探索任务 (任务契约)
@@ -44,7 +44,7 @@ DEFAULT_STYLES = ["conservative", "aggressive", "innovative"]
 
 _CONTEXT_WINDOW = 12  # 历史上下文保留条数 (只聚合摘要, 控制 token)
 
-# Sprint 36.2 (WING-Corvus P1): 某路超过该秒数未向总指挥汇报 → 无进展信号
+# (WING-Corvus P1): 某路超过该秒数未向总指挥汇报 → 无进展信号
 # (任务驱动 + 进度汇报驱动的监控侧: 总指挥持续监控汇报流, 长时间无进展则介入调整)
 _STALE_REPORT_SECS = 60.0
 
@@ -147,10 +147,10 @@ class Commander:
         #                                             "progress_count": int, "reported": bool}}
         self._style_reports: dict[str, dict] = {}
         self._convergence_events: list[str] = []   # 路径趋同事件记录 (累计 ≥2 → MUST)
-        # Sprint 36.2: 主方向与备选方向管理 (主方向修改仅两种途径: 保守/激进证伪; 创新经允许深入证实)
+        # 主方向与备选方向管理 (主方向修改仅两种途径: 保守/激进证伪; 创新经允许深入证实)
         self._main_direction: str = ""              # 当前主方向 (P1 完成后由全局情报摘要确定)
         self._alt_directions: list[str] = []        # 备选方向列表 (创新发散确认的可能性方向)
-        # 阶段切换的规则阈值 (Sprint 36.2: 改为"任务驱动 + 进度汇报驱动", 非步数硬门槛)
+        # 阶段切换的规则阈值 (改为"任务驱动 + 进度汇报驱动", 非步数硬门槛)
         # P1→P2: 三路全部完成侦查汇报 (progress_count ≥1 且无死锁) 才进入 P2
         self._phase_p3_fail_threshold = 2   # P3→P2: 多路连续失败数 (激进+保守均报告失败)
 
@@ -331,11 +331,11 @@ class Commander:
                 entry["fails"] += 1
             else:
                 entry["fails"] = 0
-            # Sprint 36.2: progress 汇报 (P1 侦查进度) — 累计该路完成的侦查汇报数
+            # progress 汇报 (P1 侦查进度) — 累计该路完成的侦查汇报数
             if rtype == "progress":
                 entry["progress_count"] += 1
                 entry["reported"] = True
-            # Sprint 36.2 (2026-08-05 校准): recon_done = 该路 P1 侦查完成
+            # (2026-08-05 校准): recon_done = 该路 P1 侦查完成
             # (战略层 LLM 判断基础侦查已覆盖题目全貌). 三路全部完成后才整合全局情报 → P2.
             if rtype == "recon_done":
                 entry["recon_done"] = True
@@ -344,7 +344,7 @@ class Commander:
             entry["last_report"] = content[:150]
 
     def _phase_advance_rule(self) -> str:
-        """基于当前汇报状态, 规则判定阶段切换 (Sprint 36.2 重构: 任务驱动 + 进度汇报驱动).
+        """基于当前汇报状态, 规则判定阶段切换 (重构: 任务驱动 + 进度汇报驱动).
 
         核心变更 (2026-08-05, 用户规范校准):
         - **P1→P2: 三路全部完成侦查汇报** (progress_count ≥1 且无死锁) 才进入 P2.
@@ -365,7 +365,7 @@ class Commander:
                 return "P2"
             if flag_candidate:
                 return "P4"
-        # 前进链路 (Sprint 36.2: 每级都有确凿门槛, 不能跳过)
+        # 前进链路 (每级都有确凿门槛, 不能跳过)
         while True:
             nxt = cur
             if cur == "P1":
@@ -389,7 +389,7 @@ class Commander:
         return cur
 
     def _p1_synthesize(self, bus: Any = None) -> list[CommanderDirective]:
-        """Sprint 36.2 (WING-Corvus P1): 三路侦查全部完成 → 整合全局情报摘要 + 确定主方向.
+        """(WING-Corvus P1): 三路侦查全部完成 → 整合全局情报摘要 + 确定主方向.
 
         流程 (用户规范 2026-08-05):
         1. 拉取三路全部 progress/recon_done 汇报 (各自独立侦查的成果)
@@ -486,7 +486,7 @@ class Commander:
         return "\n".join(lines)
 
     def _p2_verify_direction(self, bus: Any = None) -> list[CommanderDirective] | None:
-        """Sprint 36.2 (WING-Corvus P2): P2→P3 前总指挥**确凿分析** verified 汇报.
+        """(WING-Corvus P2): P2→P3 前总指挥**确凿分析** verified 汇报.
 
         用户规范 2026-08-05: 进入 P3 的必要因素是某方向**足够的证据支撑 + 取得验证**
         + **汇报完整** + **总指挥分析确凿**. 此方法即"总指挥确凿分析"环节:
@@ -575,7 +575,7 @@ class Commander:
         for style, entry in self._style_reports.items():
             if self._report_type_of(style) == "flag":
                 flag_candidate = True
-            # Sprint 36.2: verified 汇报 (方向验证成功, 证据支撑+验证通过)
+            # verified 汇报 (方向验证成功, 证据支撑+验证通过)
             if self._report_type_of(style) == "verified":
                 verified = True
             if entry["fails"] >= 1:
@@ -732,7 +732,7 @@ class Commander:
     def _make_phase_directives(self) -> list[CommanderDirective]:
         """阶段切换时按阶段为每路生成差异化任务指令 (SHOULD, 方向性指引).
 
-        各阶段每路的任务侧重 (Sprint 36.2 校准, 用户规范为准):
+        各阶段每路的任务侧重 (校准, 用户规范为准):
         - P1: conservative 系统性扫描 / aggressive 直接尝试攻击记录响应 / innovative 非常规挖掘
         - P2: conservative 稳步主方向细节 / aggressive 快速深入主方向 / innovative 发散探索可能方向
         - P3: conservative 严谨利用 / aggressive 快速利用 / innovative 创造性利用
@@ -776,7 +776,7 @@ class Commander:
         """消费新汇报 → 阶段状态机 → LLM 分析 (含规则信号参考) → 下发.
 
         返回本次下发的指令列表; silent 或汇报为空时返回 [].
-        Sprint 36.2 校准: 不再用死板代码直接产 MUST — 趋同/卡住规则检测降级为
+        校准: 不再用死板代码直接产 MUST — 趋同/卡住规则检测降级为
         **LLM 分析的参考信号** (注入 analyze prompt), 由总指挥 LLM 基于完整上下文
         判断是否干预及优先级. 阶段切换仍为规则驱动 (进度/验证信号是客观事实).
         """
@@ -786,13 +786,13 @@ class Commander:
         # 1. 阶段状态机: 规则判定切换 (基于客观汇报信号: 三路完成侦查 / 方向验证)
         new_phase = self._phase_advance_rule()
         if new_phase != self._phase:
-            # Sprint 36.2 (2026-08-05 校准): P1→P2 必须先整合全局情报摘要并确定
+            # (2026-08-05 校准): P1→P2 必须先整合全局情报摘要并确定
             # 主方向 (LLM 汇总三路侦查成果), 再随 P2 分工指令广播摘要 — 而非直接切换.
             if self._phase == "P1" and new_phase == "P2":
                 summary_dirs = self._p1_synthesize(bus=bus)
                 if summary_dirs:
                     return summary_dirs
-            # Sprint 36.2 (2026-08-05 校准): P2→P3 必须先由总指挥**确凿分析**
+            # (2026-08-05 校准): P2→P3 必须先由总指挥**确凿分析**
             # verified 汇报 (证据支撑+验证通过+汇报完整) — 确凿后才切换 P3;
             # 证据不足则保持 P2, 本轮正常分析其余汇报.
             elif self._phase == "P2" and new_phase == "P3":
@@ -816,7 +816,7 @@ class Commander:
     def _rule_signals_block(self) -> str:
         """规则检测信号摘要 (供 LLM 参考, 不直接产指令).
 
-        Sprint 36.2: 趋同/卡住检测降级为 LLM 分析输入 — 是否干预、干预强度
+        趋同/卡住检测降级为 LLM 分析输入 — 是否干预、干预强度
         (MUST/SHOULD) 由总指挥 LLM 基于完整上下文判断, 避免死板代码误判.
         2026-08-05 校准: **P3 阶段不注入趋同/卡住信号** — 死循环与方向调整
         由战略层负责, 总指挥协调以引导为主 (仅保留进程级无汇报监控).
@@ -879,7 +879,7 @@ class Commander:
         2. 创新发散方向经允许深入并证实正确 → 更新主方向
         若只是"有可能方向" → 加入备选列表 (主方向被证伪后才启用).
         """
-        # Sprint 36.2 (2026-08-05 校准): P1 侦查阶段**不确认主方向** —
+        # (2026-08-05 校准): P1 侦查阶段**不确认主方向** —
         # 主方向须等三路侦查全部完成后由全局情报摘要整合确定 (_p1_synthesize).
         # P1 期间 LLM 输出的 main_direction 一律忽略 (避免过早锁定方向).
         if self._phase == "P1":
@@ -908,7 +908,7 @@ class Commander:
         """基于已消费的汇报做 LLM 分析, 产出并下发 directive (静默则不下发).
 
         WING-Corvus 2.0: 注入当前阶段与阶段策略 (LLM 依据阶段生成差异化指令).
-        Sprint 36.2: 注入规则信号 (趋同/卡住) 与主方向/备选方向, 供 LLM 确凿判断.
+        注入规则信号 (趋同/卡住) 与主方向/备选方向, 供 LLM 确凿判断.
         """
         b = bus or self.bus
         assignments_block = "\n".join(
@@ -929,7 +929,7 @@ class Commander:
             phase_block=phase_block,
             main_direction_block=main_direction_block,
         )
-        # Sprint 36.2: 规则信号 (趋同/卡住) 作为 LLM 参考注入, 由 LLM 判断干预与否
+        # 规则信号 (趋同/卡住) 作为 LLM 参考注入, 由 LLM 判断干预与否
         rule_signals = self._rule_signals_block()
         if rule_signals and rule_signals != "(无规则信号)":
             user_prompt += f"\n\n## 规则检测参考信号 (非强制, 请 LLM 判断)\n{rule_signals}"
@@ -942,7 +942,7 @@ class Commander:
         if not obj:
             return directives
 
-        # Sprint 36.2: 更新主方向/备选方向 (主方向修改仅两种途径的 LLM 侧判断)
+        # 更新主方向/备选方向 (主方向修改仅两种途径的 LLM 侧判断)
         self._update_directions_from_llm(obj)
 
         silent = bool(obj.get("silent", False))
@@ -953,7 +953,7 @@ class Commander:
 
         raw = obj.get("directives") or []
 
-        # Sprint 36.2: P3 阶段协调以引导为主 — 除非返回 P2 (漏洞验证失败),
+        # P3 阶段协调以引导为主 — 除非返回 P2 (漏洞验证失败),
         # 否则将转向类指令降级为 SHOULD (死循环/方向调整由战略层负责).
         # 修复 (2026-08-05): 此前在 raw 赋值前引用, NameError 导致 P3 阶段
         # analyze_reports 异常 → 总指挥在 P3 静默失效.
@@ -974,7 +974,7 @@ class Commander:
             # 反幻觉: MUST 必须有 FACT/LIKELY 支撑 (由 reports_block 内的分级决定,
             # 此处仅做最低约束: MUST 方向不能为空, 依据不能为空)
             reason = str(d.get("reason") or "")[:300]
-            # WING-Corvus 升级 (2026-08-05, nss_2800 复盘): MUST 依据门槛 —
+            # WING-Corvus 升级 (2026-08-05, 历史复盘): MUST 依据门槛 —
             # 总指挥基于汇报摘要决策, 若无明确理由 (空 reason / 未引用任何汇报),
             # 该指令本质是猜测, 不得以 MUST 强制 (会让 agent 被迫执行错误方向,
             # 案例: 总指挥 MUST "直接请求 /utils.php" 但该路径已被证实空/404).
@@ -1018,7 +1018,7 @@ class Commander:
                     task_no=d.task_no,
                     priority=d.priority,
                     reason=d.reason,
-                    phase=self._phase,  # Sprint 36.2: 附带当前阶段, 供战略层感知注入任务
+                    phase=self._phase,  # 附带当前阶段, 供战略层感知注入任务
                 ))
             except Exception:
                 continue

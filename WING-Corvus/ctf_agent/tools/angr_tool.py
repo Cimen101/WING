@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""L2 angr 符号执行工具 (Sprint 14 P0 新增).
+"""L2 angr 符号执行工具 (新增).
 
-为复杂 reverse 题 (如 Crypto_Reverse 的 Feistel cipher) 提供符号执行能力,
+为复杂 reverse 题 (如复杂逆向题中的 Feistel cipher) 提供符号执行能力,
 无需 LLM 反复 brute force.
 
 适用场景:
@@ -10,7 +10,7 @@
 - 需要找输入使输出匹配
 
 实现:
-- angr 9.2.213 已装在 /opt/ctf_venv (Sprint 9 安装)
+- angr 9.2.213 已装在 /opt/ctf_venv (安装)
 - 使用 path_group + explorer 找满足约束的输入
 - 支持 argv 输入 (如 ./binary 'hex_key')
 - 支持 stdin 输入 (printf '...' | ./binary)
@@ -52,14 +52,14 @@ def _check_angr(ssh: SSHClient) -> bool:
 # ============ AngrSymbolicExecTool ============
 
 class AngrSymbolicExecTool(Tool):
-    """angr 符号执行工具 (Sprint 14 P0).
+    """angr 符号执行工具 ().
 
     用途: 找使二进制输出满足特定约束的输入.
     适用: Crackme / cipher 题已知部分明文, 求 key/flag.
 
     用法:
       angr_symbolic_exec(
-          binary_path='/tmp/ctf_real7/Crypto_Reverse/crypto_binary.bin',
+          binary_path='/tmp/ctf_workspace/复杂逆向题/crypto_binary.bin',
           input_kind='argv',  # 'argv' | 'stdin'
           input_index=1,  # argv 索引 (0 是 binary 自身, 1 是第一个参数)
           input_size=16,  # 期望输入长度 (hex 字符)
@@ -76,7 +76,7 @@ class AngrSymbolicExecTool(Tool):
 
     name = "angr_symbolic_exec"
     description = (
-        "angr 符号执行 (Sprint 14 P0, 复杂 reverse 题专用).\n"
+        "angr 符号执行 (复杂 reverse 题专用).\n"
         "用法: angr_symbolic_exec(binary_path='...', input_kind='argv', "
         "input_size=16, input_format='hex', target='athena{', find_addr='0x...', "
         "avoid_addr='0x...', timeout=300)\n"
@@ -84,7 +84,7 @@ class AngrSymbolicExecTool(Tool):
         "input_format: 'hex' (默认) | 'bytes'.\n"
         "target: 期望输出中包含的字符串 (例如 'athena{').\n"
         "find_addr / avoid_addr: 符号执行的 find/avoid 地址 (0x..., 可选).\n"
-        "依赖: /opt/ctf_venv 已装 angr 9.2.213 (Sprint 9 安装).\n"
+        "依赖: /opt/ctf_venv 已装 angr 9.2.213.\n"
         "降级: angr 不可用时, 提示用 binary_analyzer + 手动分析."
     )
     parameters = {
@@ -152,7 +152,7 @@ find_addr = __FIND_ADDR__
 avoid_addr = __AVOID_ADDR__
 target = '__TARGET__'
 
-print(f"=== angr 符号执行 (Sprint 14 P0) ===")
+print(f"=== angr 符号执行 () ===")
 print(f"  binary: {binary_path}")
 print(f"  input_kind: {input_kind}, index: {input_index}, size: {input_size}")
 print(f"  target: {target!r}, format: {input_format}")
@@ -268,5 +268,5 @@ print("Done")
 # ============ 工厂函数 ============
 
 def angr_tools(ssh_client: SSHClient) -> list[Tool]:
-    """返回 angr 工具集 (Sprint 14 P0)."""
+    """返回 angr 工具集 ()."""
     return [AngrSymbolicExecTool(ssh_client)]

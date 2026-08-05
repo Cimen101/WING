@@ -1,4 +1,4 @@
-"""Sprint 9 阶段 2: SCADA 解密 solver.
+"""阶段 2: SCADA 解密 solver.
 
 背景: SCADA_Firmware_Drift 真实算法是 ror(c^k, 3) 复合算法.
 v4 agent 找到 OBFUH 错误 key, 28 步失败.
@@ -18,7 +18,7 @@ def ror(byte, n):
 
 
 def decrypt_scada(encrypted: bytes, key: bytes = b'KEY42') -> bytes:
-    """SCADA 解密 (Sprint 9 修正版): m[i] = ror(c[i] ^ k[i%klen], 3).
+    """SCADA 解密 (修正版): m[i] = ror(c[i] ^ k[i%klen], 3).
 
     真实算法 (从 SCADA 固件反汇编推导):
     - 加密: c[i] = ror(m[i] ^ k[i%klen], 3)
@@ -72,7 +72,7 @@ def find_key42_decryption(firmware_path: str) -> str:
     for q in qwords:
         encrypted += q.to_bytes(8, 'little')
 
-    # 用 KEY42 解密 (Sprint 9 修正: ror(c^k, 3) 算法)
+    # 用 KEY42 解密 (修正: ror(c^k, 3) 算法)
     decrypted = decrypt_scada(encrypted, b'KEY42')
     return decrypted.decode('utf-8', errors='replace')
 

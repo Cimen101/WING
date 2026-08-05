@@ -1,4 +1,4 @@
-"""Sprint 10: 失败轨迹缓存器 (Failed Trajectory Cache).
+"""失败轨迹缓存器 (Failed Trajectory Cache).
 
 背景:
   v5 测试中, RAM_Drift 从 v4 6 步成功退化为 v5 24 步失败。
@@ -10,10 +10,10 @@
   - 按 challenge_id 存储最近 N 次失败 trajectory (仅前 5 步 + last thought)
   - format_hint() 生成注入到 system prompt 的提示文本
   - JSONL 格式, append-only, 简单可靠
-  - TTL: 7 天后自动过期 (Sprint 10 阶段 1.2 防止历史无限积累)
+  - TTL: 7 天后自动过期 (阶段 1.2 防止历史无限积累)
   - max_records_per_challenge: 单题最多 10 条 (防止误用刷爆)
 
-Sprint 10 Stage 10 (M4): 演化器 (Reflector)
+Stage 10 (M4): 演化器 (Reflector)
   - reflect(): 基于失败 trajectory 推断 failure_mode + 推荐未用过的工具
   - Reflection 数据结构: 失败模式分类 + 工具建议 + 改进提示
   - format_reflection_hint(): 注入 LLM system prompt 的简短提示
@@ -28,12 +28,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-# Sprint 10 阶段 1.2: TTL 与上限,防止 cache 无限增长/污染后续测试
+# 阶段 1.2: TTL 与上限,防止 cache 无限增长/污染后续测试
 DEFAULT_TTL_SECONDS = 7 * 24 * 3600  # 7 天
 DEFAULT_MAX_RECORDS = 10  # 单题最多 10 条
 
 
-# Sprint 10 阶段 1.3: cross-challenge 知识共享
+# 阶段 1.3: cross-challenge 知识共享
 # 按 (type, difficulty) 共享"通用解题模式", 避免每题都重新发现
 # 注: 这是通用模式, 不是具体失败 history
 TYPE_DIFFICULTY_HINTS: dict[tuple[str, str], str] = {
@@ -54,7 +54,7 @@ TYPE_DIFFICULTY_HINTS: dict[tuple[str, str], str] = {
         "💡 多 XOR key 题目: mem_xor_analyze 会自动尝试 header_concat/header_per_page/"
         "full_concat/full_per_page 4 种模式, 节省手动试错时间。"
     ),
-    # reverse - 结构化分析 (Sprint 14 P1: 限制 angr 过度使用)
+    # reverse - 结构化分析 (限制 angr 过度使用)
     ("reverse", "easy"): (
         "[reverse easy] 简单魔数/字符串匹配, 3-6 步搞定:\n"
         "  1. strings (查 flag_like 模式, 1 步)\n"
@@ -96,7 +96,7 @@ TYPE_DIFFICULTY_HINTS: dict[tuple[str, str], str] = {
         "  - LLL 攻击 (lattice reduction): 需 sage, Kali 可装\n"
         "  - 离散对数: baby-step-giant-step 或 Pohlig-Hellman\n"
         "  - 椭圆曲线: order 检查, twist attack\n"
-        "💡 复杂代数题用 sage (Sprint 11 待集成), 当前用 ssh_python + sympy。"
+        "💡 复杂代数题用 sage (待集成), 当前用 ssh_python + sympy。"
     ),
     # web - 网络协议
     ("web", "medium"): (
@@ -106,7 +106,7 @@ TYPE_DIFFICULTY_HINTS: dict[tuple[str, str], str] = {
         "  - JWT/Cookie 篡改: base64decode + 重新签名\n"
         "💡 用 http_request 工具 + curl/wget 多次试错。"
     ),
-    # osint - 信息收集 (Sprint 14 P1 强化: 严格 4 步上限, 禁止 strings/binwalk/steghide)
+    # osint - 信息收集 (强化: 严格 4 步上限, 禁止 strings/binwalk/steghide)
     ("osint", "medium"): (
         "[OSINT 流程] 严格按以下顺序, 总步数 ≤ 5 步 (含 final_answer):\n"
         "  1. exiftool (找 GPS/相机元数据) → 有 GPS 直接 final_answer (3 位小数, 例 43.793,75.538)\n"
@@ -123,7 +123,7 @@ TYPE_DIFFICULTY_HINTS: dict[tuple[str, str], str] = {
         "⚠️ web_search/osm_geocode 失败 1 次, 立刻用 LLM 知识 (不要重试 2+ 次).\n"
         "💡 flag 格式: athena{lat,lon} (3 位小数), 例: athena{43.793,75.538}"
     ),
-    # Sprint 13 P0: osint hard 强化 — 网络失败回退到 LLM 知识, 防止步数耗尽
+    # osint hard 强化 — 网络失败回退到 LLM 知识, 防止步数耗尽
     ("osint", "hard"): (
         "[OSINT 进阶] 多图/多线索综合:\n"
         "  1. exiftool (必做第1步) → 提取 GPS/时间戳/软件/设备\n"
@@ -161,7 +161,7 @@ _MEMORY_MARKERS = [
 ]
 
 
-# ==================== Sprint 10 Stage 10: 演化器 (Reflector) ====================
+# ==================== Stage 10: 演化器 (Reflector) ====================
 
 # 失败模式分类常量
 FAILURE_MODE_LOOP_TOOL = "LOOP_TOOL_USAGE"  # 反复用同一工具
@@ -254,7 +254,7 @@ def _normalize_tool_name(name: str) -> str:
 
 @dataclass
 class Reflection:
-    """Sprint 10 Stage 10: 失败轨迹反思结果.
+    """Stage 10: 失败轨迹反思结果.
 
     由 FailedTrajectoryCache.reflect() 生成, 用于:
     1. 注入到 LLM system prompt (避免再次犯同样错误)
@@ -341,13 +341,13 @@ class FailedTrajectoryCache:
         return self.cache_dir / f"{challenge_id}.jsonl"
 
     def _is_expired(self, ts: float) -> bool:
-        """Sprint 10 阶段 1.2: 检查记录是否已过期."""
+        """阶段 1.2: 检查记录是否已过期."""
         if self.ttl_seconds <= 0:
             return False  # TTL=0 表示不过期
         return (time.time() - ts) > self.ttl_seconds
 
     def _read_valid_lines(self, cache_file: Path) -> list[dict]:
-        """读取未过期的记录 (Sprint 10 阶段 1.2)."""
+        """读取未过期的记录 (阶段 1.2)."""
         if not cache_file.exists():
             return []
         valid: list[dict] = []
@@ -411,7 +411,7 @@ class FailedTrajectoryCache:
 
         cache_file = self._path_for(challenge_id)
 
-        # Sprint 10 阶段 1.2: 读取未过期记录 + 追加新记录 + 限制条数
+        # 阶段 1.2: 读取未过期记录 + 追加新记录 + 限制条数
         existing = self._read_valid_lines(cache_file)
         existing.append(record.to_dict())
         # 超出 max_records 时, 保留最新的 max_records 条
@@ -424,7 +424,7 @@ class FailedTrajectoryCache:
         cache_file = self._path_for(challenge_id)
         if not cache_file.exists():
             return []
-        # Sprint 10 阶段 1.2: 跳过过期记录
+        # 阶段 1.2: 跳过过期记录
         valid_records = self._read_valid_lines(cache_file)
         # 末 n 条 (最新), 反转成时间倒序
         recent = valid_records[-n:] if n > 0 else valid_records
@@ -448,7 +448,7 @@ class FailedTrajectoryCache:
         return len(self._read_valid_lines(cache_file))
 
     def cleanup_expired(self) -> int:
-        """Sprint 10 阶段 1.2: 清理所有过期的 cache 文件.
+        """阶段 1.2: 清理所有过期的 cache 文件.
 
         Returns:
             清理的 challenge_id 数量
@@ -501,7 +501,7 @@ class FailedTrajectoryCache:
         return "\n".join(hint_lines)
 
     def format_type_hint(self, ch_type: str, ch_difficulty: str) -> str:
-        """Sprint 10 阶段 1.3: 获取 (type, difficulty) 级别的通用解题提示.
+        """阶段 1.3: 获取 (type, difficulty) 级别的通用解题提示.
 
         这是 cross-challenge 知识共享: 同类型同难度的题, 共享通用模式,
         避免每题都重新发现 (例如所有 forensics medium 都需要 mem_xor_analyzer).
@@ -520,7 +520,7 @@ class FailedTrajectoryCache:
         key = (ch_type, ch_difficulty)
         return TYPE_DIFFICULTY_HINTS.get(key, "")
 
-    # ==================== Sprint 10 Stage 10: 演化器 (Reflector) ====================
+    # ==================== Stage 10: 演化器 (Reflector) ====================
 
     def _reflections_path(self) -> Path:
         """返回 reflections 存储目录 (与 cache_dir 同级, 命名为 reflections)."""
@@ -682,7 +682,7 @@ class FailedTrajectoryCache:
         ch_type: str = "",
         ch_difficulty: str = "",
     ) -> Optional[Reflection]:
-        """Sprint 10 Stage 10: 基于最近失败 trajectory 生成反思.
+        """Stage 10: 基于最近失败 trajectory 生成反思.
 
         Args:
             challenge_id: 题目 ID
@@ -760,7 +760,7 @@ class FailedTrajectoryCache:
         ch_type: str = "",
         ch_difficulty: str = "",
     ) -> str:
-        """Sprint 10 Stage 10: 生成注入到 LLM prompt 的反思提示.
+        """Stage 10: 生成注入到 LLM prompt 的反思提示.
 
         与 format_hint 的区别:
         - format_hint: 失败 history 摘要 (事实)
@@ -791,7 +791,7 @@ class FailedTrajectoryCache:
         cache_file = self._path_for(challenge_id)
         if cache_file.exists():
             cache_file.unlink()
-        # Sprint 10 Stage 10: 同步清理 reflection
+        # Stage 10: 同步清理 reflection
         rf = self._reflection_file(challenge_id)
         if rf.exists():
             rf.unlink()
@@ -800,7 +800,7 @@ class FailedTrajectoryCache:
         """清除所有失败历史 (谨慎使用)."""
         for f in self.cache_dir.glob("*.jsonl"):
             f.unlink()
-        # Sprint 10 Stage 10: 同步清理 reflections
+        # Stage 10: 同步清理 reflections
         rp = self._reflections_path()
         if rp.exists():
             for f in rp.glob("*.jsonl"):

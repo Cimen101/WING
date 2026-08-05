@@ -4,7 +4,7 @@
 Windows 宿主机通过此模块与 Kali Linux 沙箱通信，执行 nmap/pwntools/strings 等工具。
 
 核心接口：
-    client = SSHClient(host="192.168.85.140", user="root", password="xxx")
+    client = SSHClient(host="<kali-host>", user="root", password="xxx")
     result = client.exec_cmd("whoami")  # CmdResult(stdout="root\n", ...)
     client.upload_file("local.bin", "/tmp/ctf_workspace/task1/local.bin")
     client.close()
@@ -64,7 +64,7 @@ class SSHClient:
     """SSH 连接客户端（基于 paramiko）.
 
     用法：
-        client = SSHClient(host="192.168.85.140", user="root", password="xxx")
+        client = SSHClient(host="<kali-host>", user="root", password="xxx")
         client.connect()
         result = client.exec_cmd("whoami")
         client.close()
@@ -195,7 +195,7 @@ class SSHClient:
         import time
         import threading
 
-        # Sprint 23: SSH 断连自动重试 (最多 2 次)
+        # SSH 断连自动重试 (最多 2 次)
         # 解决长时间运行时 SSH session not active 导致 agent 卡死的问题
         last_error: Exception | None = None
         for attempt in range(3):
@@ -372,7 +372,7 @@ class SSHClient:
             # 并发情况下可能已被创建，忽略
             pass
 
-    # ============ 批量传输 (Sprint 6 优化) ============
+    # ============ 批量传输 (优化) ============
 
     def upload_directory(
         self,
@@ -381,7 +381,7 @@ class SSHClient:
         *,
         method: str = "tar",  # "tar" | "individual"
     ) -> dict[str, Any]:
-        """批量上传目录到 Kali（Sprint 6 优化）.
+        """批量上传目录到 Kali（优化）.
 
         Args:
             local_dir: 本地目录

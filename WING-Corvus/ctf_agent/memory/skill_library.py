@@ -83,7 +83,7 @@ class Skill:
     tools: list[str] = field(default_factory=list)
     script_ref: str = ""
     source_tasks: list[str] = field(default_factory=list)
-    pattern_features: list[str] = field(default_factory=list)  # Sprint 28: 套路特征 (用于跨题匹配)
+    pattern_features: list[str] = field(default_factory=list)  # 套路特征 (用于跨题匹配)
     version: int = 1
     use_count: int = 0
     success_count: int = 0
@@ -160,21 +160,21 @@ class SkillLibrary:
         tools: list[str] | None = None,
         script_ref: str = "",
         source_task: str = "",
-        pattern_features: list[str] | None = None,  # Sprint 28: 套路特征
+        pattern_features: list[str] | None = None,  # 套路特征
     ) -> Skill:
         """新增 skill；同方向高相似则合并升级（去臃肿）。"""
         tags, tools = tags or [], tools or []
         pattern_features = pattern_features or []
         existing = self._find_similar(category, title, trigger)
         if existing is not None:
-            # Sprint 32.6: 合并时更新 title — 如果新 title 无 [避坑] 前缀而旧 title 有,
+            # 合并时更新 title — 如果新 title 无 [避坑] 前缀而旧 title 有,
             # 说明成功经验覆盖了失败经验, title 应从 [避坑] 升级为正常
             if "[避坑]" in existing.title and "[避坑]" not in title:
                 existing.title = title.strip()
             existing.body = self._merge_body(existing.body, body)
             existing.tags = sorted(set(existing.tags) | set(tags))
             existing.tools = sorted(set(existing.tools) | set(tools))
-            # Sprint 28: 合并套路特征 (去重)
+            # 合并套路特征 (去重)
             if pattern_features:
                 existing.pattern_features = sorted(
                     set(existing.pattern_features) | set(pattern_features)
@@ -244,7 +244,7 @@ class SkillLibrary:
     ) -> list[Skill]:
         """按 query 相关性 + 套路特征匹配 + 价值分检索 skill.
 
-        Sprint 28 改进: 基于 pattern_features (套路特征) 匹配, 而非题目名称.
+        改进: 基于 pattern_features (套路特征) 匹配, 而非题目名称.
         - 文本相关性 (jaccard): 0-10 分
         - 套路特征命中 (pattern_features 子串匹配): 0-6 分 (每命中 +1, 上限 6)
         - 价值分 (score): *0.1
@@ -257,7 +257,7 @@ class SkillLibrary:
                 continue
             text = f"{sk.title} {sk.trigger} {' '.join(sk.tags)} {sk.body}"
             rel = _jaccard(q, _tokenize(text))
-            # Sprint 28: 套路特征匹配 (pattern_features 子串命中 query)
+            # 套路特征匹配 (pattern_features 子串命中 query)
             pattern_hits = 0
             if sk.pattern_features:
                 for feat in sk.pattern_features:
@@ -279,7 +279,7 @@ class SkillLibrary:
         top_k: int = 2,
         min_pattern_hits: int = 2,
     ) -> list[Skill]:
-        """Sprint 28: 基于做题中累积的 observation 文本, 按套路特征检索 skill.
+        """基于做题中累积的 observation 文本, 按套路特征检索 skill.
 
         用于做题中动态检索 — 当 agent 收集到足够线索 (observation) 后,
         用线索文本匹配 pattern_features, 找出套路相同的 skill.
@@ -329,7 +329,7 @@ class SkillLibrary:
     def format_for_mid_solve(
         self, observation_text: str, *, category: str | None = None
     ) -> str:
-        """Sprint 28: 做题中动态检索并渲染 skill 提示.
+        """做题中动态检索并渲染 skill 提示.
 
         与 format_for_prompt 区别:
         - 基于 observation 文本 (做题中累积的线索) 检索, 而非题目描述

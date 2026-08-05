@@ -103,31 +103,31 @@ class CircuitBreaker:
         *,
         max_repeated_actions: int = 3,
         max_thought_deadlock: int = 5,
-        # Sprint 6 P1 修复：无效步数（action 相同 + observation 高相似）
+        # 修复：无效步数（action 相同 + observation 高相似）
         max_invalid_steps: int = 5,
         obs_similarity_threshold: float = 0.85,
         max_seconds: float = 1800.0,  # 30 分钟
         max_steps: int = 35,
         max_cost_usd: float = 1.5,
-        # Sprint 36 复盘: flash 模型极便宜, $1.5 成本熔断形同虚设
+        # 复盘: flash 模型极便宜, $1.5 成本熔断形同虚设
         # (threshold 单题烧 9.4M tokens 才 ~$1.15, 未触发熔断).
         # 增加 token 预算软/硬熔断: 超软限 → 注入收敛提示 (不终止);
         # 超硬限 → 终止 (防失控烧光 go 套餐 5 小时额度).
         max_tokens_soft: float = 2_500_000,
         max_tokens_hard: float = 4_000_000,
         max_workspace_mb: int = 1024,  # 1 GB
-        # Sprint 7 P1-1: 单步耗时上限（防止 docker build / long-running 命令卡死）
+        # 单步耗时上限（防止 docker build / long-running 命令卡死）
         max_single_step_seconds: float = 120.0,
         ssh_client: Optional[Any] = None,
         ssh_workspace_path: str = "/tmp/ctf_workspace/",
         token_pricer: Optional[Callable[[int, str | None], float]] = None,
-        # Sprint 32.4: 时间熔断进展感知 (#2501 Blast 复盘修复)
+        # 时间熔断进展感知 (历史复盘修复)
         # 之前时间熔断"一刀切": 到 max_seconds 就 terminate, 不看是否有进展.
-        # #2501 第47步方向正确、刚发现关键线索 ("MD5 输入是整个后缀"),
+        #  第47步方向正确、刚发现关键线索 ("MD5 输入是整个后缀"),
         # 却在 1200s 被熔断误杀, 且 executor 传入的 1500s 被 medium 强制压到 1200s.
         # 修复: 超过 max_seconds 后, 若最近 progress_grace_seconds 秒内仍有实质进展
         # (产生新的非空 observation), 则自动延长.
-        # Sprint 32.4b (用户要求): 尽量不做严格硬截断 — 优先 LLM 软截断
+        # (用户要求): 尽量不做严格硬截断 — 优先 LLM 软截断
         # (协调器 [MUST] 指导 + extend_steps 加步). hard_max_seconds 放宽到
         # max_seconds*3 (单轮 75 分钟) 仅作防失控保险, 真正的硬兜底由
         # executor 侧 no_progress 检测 (5-10 分钟无输出) 承担.
@@ -148,7 +148,7 @@ class CircuitBreaker:
         self.ssh_client = ssh_client
         self.ssh_workspace_path = ssh_workspace_path
         self._token_pricer = token_pricer or _default_pricer
-        # Sprint 32.4: 时间熔断进展感知
+        # 时间熔断进展感知
         self.progress_grace_seconds = progress_grace_seconds
         self.hard_max_seconds = hard_max_seconds if hard_max_seconds > 0 else max_seconds * 3
 
@@ -157,19 +157,19 @@ class CircuitBreaker:
         self._consecutive_same_thought: int = 0
         self._last_thought: str = ""
         self._started_at: float = 0.0
-        # Sprint 32.4: 最近一次有实质进展的时间 + 上次 observation (判进展用)
+        # 最近一次有实质进展的时间 + 上次 observation (判进展用)
         self._last_progress_at: float = 0.0
         self._last_progress_obs: str = ""
         # 已注入过的提示类型，避免无限注入
         self._hinted_keys: set[tuple[str, str]] = set()
         self._hinted_deadlock: bool = False
         self._hinted_workspace: bool = False
-        self._hinted_tokens: bool = False  # Sprint 36: token 软预算提示已注入
-        # Sprint 6 P1: 无效步数跟踪（同 action 连续产生相似 observation）
+        self._hinted_tokens: bool = False  # token 软预算提示已注入
+        # 无效步数跟踪（同 action 连续产生相似 observation）
         self._invalid_step_counts: dict[str, int] = {}  # action -> count
         self._last_obs_per_action: dict[str, str] = {}  # action -> 归一化后的 obs
         self._hinted_invalid: set[str] = set()  # 已提示过的 action
-        # Sprint 7 P1-1: 单步耗时跟踪
+        # 单步耗时跟踪
         self._long_step_hints: set[str] = set()  # 已提示过的 action
         # 成本累计
         self._accumulated_cost_usd: float = 0.0
@@ -182,18 +182,18 @@ class CircuitBreaker:
         self._consecutive_same_thought = 0
         self._last_thought = ""
         self._started_at = time.monotonic()
-        # Sprint 32.4: 进展感知重置
+        # 进展感知重置
         self._last_progress_at = self._started_at
         self._last_progress_obs = ""
         self._hinted_keys.clear()
         self._hinted_deadlock = False
         self._hinted_workspace = False
         self._hinted_tokens = False
-        # Sprint 6 P1: 无效步数重置
+        # 无效步数重置
         self._invalid_step_counts.clear()
         self._last_obs_per_action.clear()
         self._hinted_invalid.clear()
-        # Sprint 7 P1-1: 单步耗时重置
+        # 单步耗时重置
         self._long_step_hints.clear()
         self._accumulated_cost_usd = 0.0
         self._accumulated_tokens = 0
@@ -257,7 +257,7 @@ class CircuitBreaker:
         Returns:
             BreakerAction，调用方根据 action 字段决定后续处理
         """
-        # 0. 进展跟踪 (Sprint 32.4): 新的非空 observation = 实质进展
+        # 0. 进展跟踪: 新的非空 observation = 实质进展
         # 时间熔断依赖此信息: 有进展则自动延长, 无进展才熔断
         if step is not None and getattr(step, "observation", "") and not getattr(step, "is_error", False):
             norm = self._normalize_obs(step.observation)
@@ -265,7 +265,7 @@ class CircuitBreaker:
                 self._last_progress_at = time.monotonic()
                 self._last_progress_obs = norm
 
-        # 1. 时间熔断 (Sprint 32.4: 进展感知, 修复 #2501 方向正确仍被误杀)
+        # 1. 时间熔断 (进展感知, 修复  方向正确仍被误杀)
         if self._started_at > 0:
             elapsed = time.monotonic() - self._started_at
             if elapsed > self.max_seconds:
@@ -281,7 +281,7 @@ class CircuitBreaker:
                 # 有实质进展 → 自动延长 (不熔断), 仅当接近硬上限时提醒
                 # (方向正确、进展正常时绝不误杀; 硬上限由 executor 侧兜底)
 
-        # 2. 步数熔断 (Sprint 32.4b: 进展感知软截断)
+        # 2. 步数熔断 (进展感知软截断)
         # 之前 `step_no > max_steps` 直接 terminate, 是严格硬截断 — 若加步
         # (extend_steps) 未及时生效, 方向正确的 agent 会被步数上限硬杀.
         # 现改为: 超过 max_steps 后, 若持续无进展 (progress_grace 内无新
@@ -307,7 +307,7 @@ class CircuitBreaker:
                 ),
             )
 
-        # 3.5. token 预算熔断 (Sprint 36: 软限注入收敛提示, 硬限终止)
+        # 3.5. token 预算熔断 (软限注入收敛提示, 硬限终止)
         # flash 便宜使 $1.5 成本熔断失效 (9.4M tokens ≈ $1.15), 直接按 token 数熔断.
         if self.max_tokens_hard > 0 and self._accumulated_tokens > self.max_tokens_hard:
             return BreakerAction(
@@ -354,7 +354,7 @@ class CircuitBreaker:
                     ),
                 )
 
-        # 4.5 Sprint 7 P1-1: 单步耗时检测（防止 docker build / long-running 卡死）
+        # 4.5 单步耗时检测（防止 docker build / long-running 卡死）
         # 计算本步耗时（从 LLM 调用开始到本 step 提交）
         step_elapsed = 0.0
         step_timestamp = getattr(step, "timestamp", 0)
@@ -420,7 +420,7 @@ class CircuitBreaker:
                     ),
                 )
 
-        # 7. Sprint 6 P1: 无效步数检测（同 action + 高度相似 obs）
+        # 7. 无效步数检测（同 action + 高度相似 obs）
         # 比"重复动作"更宽松（参数可微变，只要输出类似就视为无效）
         if step.action and step.observation and not step.is_error:
             norm_obs = self._normalize_obs(step.observation)
@@ -453,7 +453,7 @@ class CircuitBreaker:
         return BreakerAction(action="continue")
 
     def has_recent_progress(self) -> bool:
-        """Sprint 32.4b: 是否有最近实质进展 (供 ReAct 步数软截断判断).
+        """是否有最近实质进展 (供 ReAct 步数软截断判断).
 
         超过 max_steps 后, 只要 progress_grace_seconds 内有新的非空 observation
         (实质进展), 就允许继续 — 优先 LLM 软截断/加步, 不做严格硬截断.

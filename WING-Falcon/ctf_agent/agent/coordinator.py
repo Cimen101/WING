@@ -1,4 +1,4 @@
-"""Sprint 27/29: 巡查指导器 (Coordinator LLM) — 智能旁观者.
+"""巡查指导器 (Coordinator LLM) — 智能旁观者.
 
 核心设计思想: 旁观者清，当局者迷.
 解题 Agent 在解题时由于专注于当下可能陷入困境或方向走错,
@@ -43,12 +43,12 @@ class CoordinatorGuidance:
     extend_steps: bool = False              # 是否建议扩展步数
     detected_issues: list[str] = field(default_factory=list)
     analysis_summary: str = ""              # LLM 分析摘要 (用于日志)
-    priority: str = "SHOULD"                # Sprint 31: "MUST" = 必须执行, "SHOULD" = 建议执行
-    forbidden_actions: list[str] = field(default_factory=list)  # Sprint 31: 禁忌列表 (已确认无效的操作)
-    # Sprint 32.4c: 巡查器自我纠错 — 用后续轨迹验证自己之前的判断
+    priority: str = "SHOULD"                # "MUST" = 必须执行, "SHOULD" = 建议执行
+    forbidden_actions: list[str] = field(default_factory=list)  # 禁忌列表 (已确认无效的操作)
+    # 巡查器自我纠错 — 用后续轨迹验证自己之前的判断
     revert_guidance: bool = False           # 撤销上次指导 (上次判断被后续轨迹证伪)
     remove_forbidden: list[str] = field(default_factory=list)  # 从禁忌列表移除误判项 (agent 用该操作取得了突破)
-    # Sprint 32.7: 推论分级框架 — 透传给调用器用于完整日志显示
+    # 推论分级框架 — 透传给调用器用于完整日志显示
     reflection: str = ""                    # 巡查器反思过程 (必填, 供日志/调试)
     belief_state: list[dict] = field(default_factory=list)  # 推论清单 [{id, statement, level, evidence, action}]
 
@@ -70,7 +70,7 @@ _COORDINATOR_SYSTEM_PROMPT = """你是 CTF 解题巡查指导器 (Coordinator), 
    费马法无效, 应该用 factordb 或 sympy.factorint".
 4. **基于证据**: 判断必须基于轨迹中的实际行为, 不要猜测 Agent 的意图.
 
-## 推论分级框架 (Sprint 32.6 — 核心改造)
+## 推论分级框架 (— 核心改造)
 
 你对轨迹的每次分析都必须基于**推论分级**. 所有判断分为四个等级:
 
@@ -127,7 +127,7 @@ _COORDINATOR_SYSTEM_PROMPT = """你是 CTF 解题巡查指导器 (Coordinator), 
    - 如果知识库中有匹配的 Skill, Agent 是否在用?
    - 如果 Agent 的方向与知识库建议完全不同, 是否 Agent 发现了新路径还是走错了?
 
-5. **自我纠错 (Sprint 32.4c + 32.6 强化)**: 你之前的判断不一定是正确的, 你要用后续轨迹验证它.
+5. **自我纠错 (+ 32.6 强化)**: 你之前的判断不一定是正确的, 你要用后续轨迹验证它.
    - 如果上次指导后 Agent 未按指导执行, 但用自己的方式持续取得进展 (轨迹显示新的发现/线索/突破),
      说明上次指导可能不准确 → 撤销上次指导 (revert_guidance=true).
      此时若 Agent 当前方向正确, 应保持沉默 (should_intervene=false), 让 Agent 按自己的有效路径推进.
@@ -160,18 +160,18 @@ _COORDINATOR_SYSTEM_PROMPT = """你是 CTF 解题巡查指导器 (Coordinator), 
   "analysis_summary": "一句话分析摘要"
 }
 
-## revert_guidance / remove_forbidden 说明 (Sprint 32.4c 自我纠错)
+## revert_guidance / remove_forbidden 说明 (自我纠错)
 - revert_guidance=true: 你之前的下达的指导被后续轨迹证伪 (Agent 用自己的方式取得了进展).
   此时应撤销该指导, 不再强制 Agent 执行. 如果 Agent 当前方向正确, 同时保持 should_intervene=false.
 - remove_forbidden: 禁忌列表中已被 Agent 成功使用的操作 (误判), 应移除.
 
 ## priority 说明
 - "MUST": Agent 必须立即执行指导, 不得自主判断优先级. 用于明显方向错误/死循环/禁忌操作.
-  Sprint 32.4 强化: MUST 指导必须给出**强制工具链切换** — 明确"停止 X, 改用 Y 工具/方法",
+  强化: MUST 指导必须给出**强制工具链切换** — 明确"停止 X, 改用 Y 工具/方法",
   不要只说"换个思路". 例: "停止单字符 MD5 爆破, 用 gdb 在 call 0x404140 处断点读取 MD5 输入".
 - "SHOULD": 建议执行, Agent 可结合实际情况判断. 用于软线索/改进建议.
 
-## 假设证伪 (Sprint 32.4 新增维度)
+## 假设证伪 (新增维度)
 
 当 Agent 长期围绕同一假设反复操作 (如"逐字符 MD5 爆破") 但轨迹结果不支持时:
 1. **必须识别该假设已被结果否定**: 检查目标表/观测值是否与假设预期匹配
@@ -259,7 +259,7 @@ _COORDINATOR_USER_TEMPLATE = """## 题目信息
 class Coordinator:
     """巡查指导器: LLM 驱动的智能旁观者.
 
-    Sprint 30 两级分析 (优化触发逻辑):
+    两级分析 (优化触发逻辑):
     1. L1-A 规则预检 (快速, 不调 LLM): 只处理确定性问题
        - 完全重复死循环 (同一工具+相似参数 ≥3 次) → 直接生成指导
        - 明显方向错误 (题型完全不匹配) → 直接生成指导
@@ -280,7 +280,7 @@ class Coordinator:
         llm: Any = None,                    # LLM 客户端 (用于深度分析)
         skill_library: Any = None,          # Skill 库 (用于查询匹配 Skill)
         long_term: Any = None,              # RAG 库 (用于查询相似 writeup)
-        check_interval: int = 10,           # 后续巡查间隔 (步) — Sprint 32.3: 15→10, 更频繁纠偏, 减少总轮数
+        check_interval: int = 10,           # 后续巡查间隔 (步) — 15→10, 更频繁纠偏, 减少总轮数
         first_check: int = 10,              # 首次巡查步数
         lookback: int = 10,                 # 规则预检回看步数
         max_repeats: int = 3,               # 同一操作重复 N 次判定为死循环
@@ -299,23 +299,23 @@ class Coordinator:
         # 异常触发: 连续错误步计数
         self._consecutive_errors = 0
         self._last_check_step = 0
-        # Sprint 30: 指导持久性 — 记录上次指导, 若 agent 未改变行为则强化提醒
+        # 指导持久性 — 记录上次指导, 若 agent 未改变行为则强化提醒
         self._last_guidance: str = ""
         self._last_guidance_step: int = 0
         self._last_guidance_action: str = ""  # 上次指导时 agent 的主导工具
-        self._last_guidance_priority: str = ""  # Sprint 32.4: 上次指导的优先级 (MUST/SHOULD)
-        # Sprint 31: 禁忌列表 — 已确认无效的操作, agent 再尝试时拦截
+        self._last_guidance_priority: str = ""  # 上次指导的优先级 (MUST/SHOULD)
+        # 禁忌列表 — 已确认无效的操作, agent 再尝试时拦截
         self._forbidden_actions: list[str] = []
-        # Sprint 31: 动态干预频率 — 出现错误后缩短间隔
+        # 动态干预频率 — 出现错误后缩短间隔
         self._error_since_last_check: int = 0
-        # Sprint 32.6: 推论状态 — 跨巡查持久化, 每次更新后存回
+        # 推论状态 — 跨巡查持久化, 每次更新后存回
         # 格式: [{"id": "B1", "statement": "...", "level": "FACT/LIKELY/POSSIBLE/DISPROVED", "evidence": "..."}]
         self._belief_state: list[dict] = []
 
     def should_check(self, step_no: int, max_steps: int = 0) -> bool:
         """是否到了巡查点.
 
-        Sprint 31 动态干预频率:
+        动态干预频率:
         1. 首次巡查: 第 first_check 步 (默认 10)
         2. 正常后续: 每 check_interval 步 (默认 15)
         3. 出现错误后: 间隔缩短至 5 步 (快速纠偏)
@@ -360,7 +360,7 @@ class Coordinator:
         return False
 
     def intercept_forbidden(self, action: str, action_input: str) -> str:
-        """Sprint 32.4: 工具执行前拦截禁忌操作 (供 ReAct 引擎调用).
+        """工具执行前拦截禁忌操作 (供 ReAct 引擎调用).
 
         禁忌列表中的操作 (如"hashcat 爆破 cloud.zip 密码"已被确认无效) 在
         巡查间隔之外也会被拦截, 立即重定向 Agent, 避免继续浪费步数.
@@ -390,7 +390,7 @@ class Coordinator:
     ) -> CoordinatorGuidance:
         """分析轨迹, 返回指导.
 
-        Sprint 30 两级分析 (优化触发逻辑):
+        两级分析 (优化触发逻辑):
         1. L1 规则预检 (快速, 不调 LLM):
            - 完全重复死循环 (同一工具+相似参数 ≥3 次) → 直接生成指导
            - 明显方向错误 (题型完全不匹配) → 直接生成指导
@@ -415,12 +415,12 @@ class Coordinator:
 
         # ── L1-A: 确定性问题 (直接干预, 不调 LLM) ──
         hard_issues: list[str] = []
-        # Sprint 32.4c: soft_hints 提前定义 — exact_repeat 有进展时降级到此
+        # soft_hints 提前定义 — exact_repeat 有进展时降级到此
         soft_hints: list[str] = []
 
         # 完全重复死循环 (同一工具+相似参数 ≥3 次)
-        # Sprint 32.4c: 完全重复但持续有新 observation → 降级为软线索 (交 L2 LLM 判断),
-        # 避免对"同脚本模板反复验证不同目标"的系统性逆向误判 (#2516 复盘: agent 反复
+        # 完全重复但持续有新 observation → 降级为软线索 (交 L2 LLM 判断),
+        # 避免对"同脚本模板反复验证不同目标"的系统性逆向误判 (历史复盘: agent 反复
         # 用同一 capstone 模板验证不同函数/假设, 实际是严谨的验证性推进)
         exact_repeat = self._check_exact_repeats(recent)
         if exact_repeat:
@@ -434,13 +434,13 @@ class Coordinator:
         if direction_issue:
             hard_issues.append(direction_issue)
 
-        # Sprint 31: 禁忌操作检测 (agent 在尝试已确认无效的操作)
+        # 禁忌操作检测 (agent 在尝试已确认无效的操作)
         forbidden_hit = self._check_forbidden_actions(recent)
         if forbidden_hit:
             hard_issues.append(forbidden_hit)
 
-        # Sprint 32.4: MUST 指令未被执行 — 上次 MUST 指导后 agent 行为未改变
-        # (分析 #2501: 协调器 step10 下达 MUST 但 agent 忽略, 继续 MD5 爆破 20 步)
+        # MUST 指令未被执行 — 上次 MUST 指导后 agent 行为未改变
+        # (分析 协调器 step10 下达 MUST 但 agent 忽略, 继续 MD5 爆破 20 步)
         must_ignored = self._check_must_noncompliance(recent)
         if must_ignored:
             hard_issues.append(must_ignored)
@@ -450,11 +450,11 @@ class Coordinator:
             self._last_guidance = guidance
             self._last_guidance_step = step_no
             self._last_guidance_action = self._dominant_action(recent)
-            self._last_guidance_priority = "MUST"  # Sprint 32.4: 记录优先级
+            self._last_guidance_priority = "MUST"  # 记录优先级
             self._error_since_last_check = 0  # 巡查后重置
             return CoordinatorGuidance(
                 should_intervene=True,
-                priority="MUST",  # Sprint 31: 确定性问题必须执行
+                priority="MUST",  # 确定性问题必须执行
                 guidance=guidance,
                 reason="; ".join(hard_issues),
                 extend_steps=False,
@@ -484,7 +484,7 @@ class Coordinator:
                 task_desc, step_no, max_steps, soft_hints,
             )
             self._error_since_last_check = 0  # 巡查后重置
-            # Sprint 31: 同步禁忌列表到返回值
+            # 同步禁忌列表到返回值
             result.forbidden_actions = list(self._forbidden_actions)
             return result
 
@@ -493,7 +493,7 @@ class Coordinator:
             guidance = self._build_rule_guidance(soft_hints, challenge_type)
             self._last_guidance = guidance
             self._last_guidance_step = step_no
-            self._last_guidance_priority = "SHOULD"  # Sprint 32.4
+            self._last_guidance_priority = "SHOULD"  # 
             self._last_guidance_action = self._dominant_action(recent)
             self._error_since_last_check = 0
             return CoordinatorGuidance(
@@ -509,7 +509,7 @@ class Coordinator:
 
         # 无 LLM 且无任何问题
         self._error_since_last_check = 0
-        # Sprint 32: 也检查步数接近上限 (与 L2 路径一致)
+        # 也检查步数接近上限 (与 L2 路径一致)
         near_limit = step_no >= max_steps - self.early_exit_steps if max_steps > 0 else False
         extend = len(trajectory) >= self.lookback or near_limit
         return CoordinatorGuidance(
@@ -575,7 +575,7 @@ class Coordinator:
         return ""
 
     def _check_guidance_persistence(self, recent: list[dict]) -> str:
-        """Sprint 30: 检查上次指导后 agent 是否改变了行为.
+        """检查上次指导后 agent 是否改变了行为.
 
         如果上次指导后 agent 仍在用相同的工具, 说明指导被忽视, 需要强化.
         """
@@ -592,9 +592,9 @@ class Coordinator:
         return ""
 
     def _check_must_noncompliance(self, recent: list[dict]) -> str:
-        """Sprint 32.4: 检测 MUST 指令未被执行 (硬问题, 直接干预).
+        """检测 MUST 指令未被执行 (硬问题, 直接干预).
 
-        背景 (#2501 Blast 复盘): 协调器 step10 下达 MUST 指令
+        背景 (历史复盘): 协调器 step10 下达 MUST 指令
         ("停止单字符 MD5 爆破"), 但 agent 忽略, 继续 MD5 穷举 20 步.
         旧逻辑只把"指导持久性"作为软线索传给 L2 LLM, LLM 可能继续沉默,
         导致 MUST 指令形同虚设.
@@ -603,9 +603,9 @@ class Coordinator:
         - 已过 ≥1 个巡查间隔仍未改变 = MUST 未执行, 直接干预
         - 同时把上次指导追加为禁忌操作 (agent 再试同类操作立即拦截)
 
-        Sprint 32.4c 自我纠错: 主导工具未变**且无任何实质进展**才算未执行.
+        自我纠错: 主导工具未变**且无任何实质进展**才算未执行.
         若 agent 持续产生新 observation (在推进), 即使工具未变也视为有效推进,
-        交由 L2 LLM 全局判断方向正确性 (#2516 复盘: agent 深挖调用链逐步
+        交由 L2 LLM 全局判断方向正确性 (历史复盘: agent 深挖调用链逐步
         突破 XOR→6-bit 编码逻辑, 但被机械判定为 MUST 未执行, 属误判).
         """
         if not self._last_guidance or self._last_guidance_step <= 0:
@@ -618,7 +618,7 @@ class Coordinator:
         steps_since = self._last_check_step - self._last_guidance_step
         if steps_since < self.check_interval:
             return ""  # 间隔太短, 可能正在切换中
-        # Sprint 32.4c: 主导工具未变但持续有实质进展 → 不判未执行
+        # 主导工具未变但持续有实质进展 → 不判未执行
         if self._has_progress_after_guidance(recent):
             return ""
         # 主导工具未变且已过一个间隔且无进展 → MUST 未执行
@@ -629,7 +629,7 @@ class Coordinator:
         )
 
     def _has_progress(self, recent: list[dict]) -> bool:
-        """Sprint 32.4c: 最近轨迹是否有实质进展.
+        """最近轨迹是否有实质进展.
 
         判定: 存在 ≥2 种不同的非空 observation (说明有新发现/新输出, 不是原地打转).
         用于将"完全重复但持续有新发现"降级为软线索, 交 L2 LLM 判断.
@@ -644,7 +644,7 @@ class Coordinator:
         return len(obs_set) >= 2
 
     def _has_progress_after_guidance(self, recent: list[dict]) -> bool:
-        """Sprint 32.4c: 指导后的轨迹是否有实质进展.
+        """指导后的轨迹是否有实质进展.
 
         判定: 最近轨迹中存在非空、非错误的 observation (有新发现/新输出).
         注意: recent 窗口内的步都在上次指导之后 (间隔 ≥ check_interval),
@@ -671,7 +671,7 @@ class Coordinator:
         return max(tool_counter, key=tool_counter.get)
 
     def _check_forbidden_actions(self, recent: list[dict]) -> str:
-        """Sprint 31: 检测 agent 是否在尝试禁忌列表中的操作.
+        """检测 agent 是否在尝试禁忌列表中的操作.
 
         禁忌列表由 LLM 分析时生成 (如"hashcat 爆破 cloud.zip 密码"连续失败后).
         如果 agent 仍在尝试同类操作, 立即干预 (priority=MUST).
@@ -768,7 +768,7 @@ class Coordinator:
                     "不要再以自身判断为由拖延. 请立即按上次指导执行."
                 )
             else:
-                # Sprint 32.4: 未知硬问题兜底 — 强制切换方向
+                # 未知硬问题兜底 — 强制切换方向
                 parts.append(
                     "  [MUST][强制] 检测到确定性问题, 必须立即改变当前操作方式: "
                     "停止重复当前思路, 换一个完全不同的工具或分析方法."
@@ -789,7 +789,7 @@ class Coordinator:
     ) -> CoordinatorGuidance:
         """L2 LLM 深度分析: 宏观审视完整轨迹 + 知识库辅助 + L1 线索.
 
-        Sprint 30: 始终触发 (不再依赖 L1 无问题), 传入 L1 软线索供 LLM 参考.
+        始终触发 (不再依赖 L1 无问题), 传入 L1 软线索供 LLM 参考.
         LLM 能区分"工具过度使用但方向正确"和"真正的思路固化", 避免误判.
         """
         try:
@@ -805,13 +805,13 @@ class Coordinator:
             else:
                 l1_hints = "(L1 规则预检未发现线索, 方向和重复性均正常)"
 
-            # Sprint 31: 构造当前禁忌列表文本
+            # 构造当前禁忌列表文本
             if self._forbidden_actions:
                 forbidden_text = "\n".join(f"- {f}" for f in self._forbidden_actions)
             else:
                 forbidden_text = "(无, 还没有确认无效的操作)"
 
-            # Sprint 32.4c: 构造上次指导区块 (供 LLM 自我纠错)
+            # 构造上次指导区块 (供 LLM 自我纠错)
             if self._last_guidance and self._last_guidance_step > 0:
                 steps_since = step_no - self._last_guidance_step
                 last_block = (
@@ -826,7 +826,7 @@ class Coordinator:
             else:
                 last_block = "(无上次指导)"
 
-            # Sprint 32.6: 构造推论状态区块 (供 LLM 回顾更新)
+            # 构造推论状态区块 (供 LLM 回顾更新)
             if self._belief_state:
                 belief_lines = []
                 for b in self._belief_state:
@@ -862,13 +862,13 @@ class Coordinator:
             chat_result = self.llm.chat(messages, temperature=0.0)
             response = chat_result.content.strip()
 
-            # 6. 解析 LLM 输出 (JSON) — Sprint 32.6: 优先匹配含 belief_state 的完整 JSON
+            # 6. 解析 LLM 输出 (JSON) — 优先匹配含 belief_state 的完整 JSON
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
 
             if json_match:
                 try:
                     result = json.loads(json_match.group())
-                    # Sprint 32.6: 更新推论状态 (跨巡查持久化)
+                    # 更新推论状态 (跨巡查持久化)
                     new_beliefs = result.get("belief_state", [])
                     if isinstance(new_beliefs, list) and new_beliefs:
                         self._belief_state = [
@@ -877,13 +877,13 @@ class Coordinator:
                                 "statement": str(b.get("statement", "")),
                                 "level": str(b.get("level", "POSSIBLE")).upper(),
                                 "evidence": str(b.get("evidence", "")),
-                                # Sprint 32.7: 透传 action (keep/upgrade/downgrade/disprove/new) 供日志显示
+                                # 透传 action (keep/upgrade/downgrade/disprove/new) 供日志显示
                                 "action": str(b.get("action", "")),
                             }
                             for i, b in enumerate(new_beliefs)
                             if isinstance(b, dict)
                         ]
-                    # Sprint 32.7: 解析 reflection (巡查器反思过程, 供调用器日志显示)
+                    # 解析 reflection (巡查器反思过程, 供调用器日志显示)
                     reflection = str(result.get("reflection", "")).strip()
                     # 自动清理 DISPROVED 推论对应的禁忌项
                     for b in self._belief_state:
@@ -899,7 +899,7 @@ class Coordinator:
                     reason = result.get("reason", "").strip()
                     extend = bool(result.get("extend_steps", False))
                     summary = result.get("analysis_summary", "").strip()
-                    # Sprint 31: 解析 priority 和 forbidden_actions
+                    # 解析 priority 和 forbidden_actions
                     priority = result.get("priority", "SHOULD").strip().upper()
                     if priority not in ("MUST", "SHOULD"):
                         priority = "SHOULD"
@@ -911,7 +911,7 @@ class Coordinator:
                             if f and f not in self._forbidden_actions:
                                 self._forbidden_actions.append(f)
 
-                    # Sprint 32.4c: 自我纠错 — 解析撤销/移除禁忌
+                    # 自我纠错 — 解析撤销/移除禁忌
                     revert = bool(result.get("revert_guidance", False))
                     remove_list = result.get("remove_forbidden", [])
                     if isinstance(remove_list, list):
@@ -939,7 +939,7 @@ class Coordinator:
                             forbidden_actions=list(self._forbidden_actions),
                             revert_guidance=revert,
                             remove_forbidden=list(result.get("_remove_forbidden", [])),
-                            # Sprint 32.7: 透传推论分级 + 反思 (供调用器完整日志)
+                            # 透传推论分级 + 反思 (供调用器完整日志)
                             reflection=reflection,
                             belief_state=[dict(b) for b in self._belief_state],
                         )
@@ -947,7 +947,7 @@ class Coordinator:
                     # 干预: 更新指导持久性属性
                     self._last_guidance = guidance
                     self._last_guidance_step = step_no
-                    self._last_guidance_priority = priority  # Sprint 32.4
+                    self._last_guidance_priority = priority  # 
                     self._last_guidance_action = self._dominant_action(
                         trajectory[-self.lookback:] if len(trajectory) >= self.lookback else trajectory
                     )
@@ -955,14 +955,14 @@ class Coordinator:
                         should_intervene=True,
                         guidance=guidance,
                         reason=reason,
-                        # Sprint 32: 干预时也检查步数接近上限自动扩展 (之前只在沉默时检查, 导致 never triggered)
+                        # 干预时也检查步数接近上限自动扩展 (之前只在沉默时检查, 导致 never triggered)
                         extend_steps=extend or (step_no >= max_steps - self.early_exit_steps if max_steps > 0 else False),
                         analysis_summary=summary,
                         priority=priority,
                         forbidden_actions=list(self._forbidden_actions),
                         revert_guidance=revert,
                         remove_forbidden=list(result.get("_remove_forbidden", [])),
-                        # Sprint 32.7: 透传推论分级 + 反思 (供调用器完整日志)
+                        # 透传推论分级 + 反思 (供调用器完整日志)
                         reflection=reflection,
                         belief_state=[dict(b) for b in self._belief_state],
                     )

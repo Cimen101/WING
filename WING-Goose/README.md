@@ -31,7 +31,7 @@ WING-Goose/
 ├── data/                 # 白板数据库（空库，下载即用）
 ├── main.py / pyproject.toml / .env.example
 ├── README.md
-└── WING_GOOSE_DESIGN.md  # 2000+ 行完整设计+使用文档
+└── WING_GOOSE_DESIGN.md # 1500+ 行完整设计+使用文档
 ```
 
 ## 快速开始

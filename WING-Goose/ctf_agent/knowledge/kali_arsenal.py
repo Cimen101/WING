@@ -234,7 +234,7 @@ _PLAYBOOK: dict[str, str] = {
     "pwn": (
         "PWN 决策流: file+checksec 看保护 -> 逆向找漏洞(溢出/fmt/UAF/off-by-one) "
         "-> cyclic 定偏移 -> 据保护选手法(无canary栈溢出/NX→ROP/ret2libc/"
-        "堆题tcache) -> pwntools 写 exp 打 remote(127.0.0.1:1337) -> "
+        "堆题tcache) -> pwntools 写 exp 打 remote(127.0.0.1) -> "
         "泄露libc→算基址→getshell→cat flag。"
     ),
 }

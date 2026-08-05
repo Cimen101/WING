@@ -1,10 +1,10 @@
-"""L2 OSINT 网络搜索 + 地理编码工具 (Sprint 12 M3 新增).
+"""L2 OSINT 网络搜索 + 地理编码工具 (新增).
 
 为 OSINT 题 (如 Where_am_i) 提供外部知识查询能力:
 - WebSearchTool: Yandex 公开搜索端点 (Kali 可达, 但常返回 captcha)
 - PhotonGeocodeTool: Photon (komoot.io) 地理编码 (基于 OSM, 公开, 无 key)
 
-Kali 沙箱网络限制 (Sprint 12 M3 实测):
+Kali 沙箱网络限制 (实测):
 - DuckDuckGo/Google/Wikipedia/Nominatim: 都 timeout 不可用
 - Yandex: 200 但常返回 captcha 页面, 大多数场景失败
 - Photon (komoot.io): 200 稳定可用, 基于 OSM 数据
@@ -47,7 +47,7 @@ def _check_tool(ssh: SSHClient, tool_name: str) -> bool:
 # ============ PhotonGeocodeTool (替代 Nominatim) ============
 
 class PhotonGeocodeTool(Tool):
-    """Photon (komoot.io) 地理编码 (Sprint 12 M3).
+    """Photon (komoot.io) 地理编码.
 
     用途: 给定遗址/地名 → 返回 GPS 坐标 (lat, lon, display_name).
     优势: 公开 API, 无 key, 基于 OpenStreetMap 数据, 包含 nature_reserve / petroglyph 等 OSM 类型.
@@ -187,7 +187,7 @@ class _YandexResultParser(HTMLParser):
 
 
 class WebSearchTool(Tool):
-    """多后端网络搜索 (Sprint 12 M3 增强).
+    """多后端网络搜索 (增强).
 
     用途: OSINT 题需要外部知识 (如考古遗址名/纪念碑位置) 时.
     后端顺序: DuckDuckGo HTML -> Bing -> Yandex, 取第一个返回有效结果的.
@@ -326,7 +326,7 @@ class WebSearchTool(Tool):
 # ============ 工厂 ============
 
 def reverse_image_tools(ssh_client: SSHClient) -> list[Tool]:
-    """创建 OSINT 网络搜索/地理编码工具集 (Sprint 12 M3).
+    """创建 OSINT 网络搜索/地理编码工具集.
 
     Args:
         ssh_client: 已连接的 SSHClient 实例

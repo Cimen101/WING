@@ -85,7 +85,7 @@ class SwarmCoordinator:
             python_executable: Python 解释器 (默认 sys.executable)
             verify_flag: flag 校验回调 (flag) -> (is_correct, feedback).
                 默认 None: 接受第一个提交的 flag 为解出 (agent 只提交确认的 flag)
-                ⚠️ 设计约定 (Crypto_Reverse 复盘):
+                ⚠️ 设计约定 (复杂逆向题复盘):
                   - verify_flag 的职责是"平台/确证性校验"(如 NSS 真实提交), 不是"防幻觉"
                     (防幻觉已由 react.py 内部兜底: 无工具调用直接 Final 会被拒绝).
                   - 只有存在确凿反证 (明确不匹配证据) 时才返回 False; 无法判定时应

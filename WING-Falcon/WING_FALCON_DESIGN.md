@@ -1,7 +1,7 @@
 # WING-Falcon（猎隼）设计与使用文档
 
 > **文档性质**：系统设计文档 + 使用指南（基于实际源码审计编写，不包含未实现的功能描述）
-> **版本**：WING-Falcon（猎隼）——精英单兵基线（Sprint 32.10 后快照）
+> **版本**：WING-Falcon（猎隼）——精英单兵基线（最新快照）
 > **发布日期**：2026-08-02
 > **代码位置**：`_publish/wing/WING-Falcon/`（含 `ctf_agent/` 源码、`main.py`、`pyproject.toml`、`.env.example`）
 > **配套文档**：`docs/CTF_AGENT_DESIGN.md`（设计文档）、`docs/CTF_AGENT_GUIDE.md`（使用指南）
@@ -58,14 +58,14 @@ WING-Falcon 的核心设计目标可以归纳为六条：
 WING-Falcon 的设计贯穿以下理念：
 
 - **方法论而非剧本**：system prompt 注入的是"如何自己发现 X"的 5 阶段自主解题方法论，而不是"用 X 攻击"的具体指令；Skill 注入一律标注"参考用，需自主判断"，避免机械复制。
-- **旁观者清**：解题 agent 当局者迷，巡查指导器作为第三者宏观审视完整行为轨迹，全局视角更容易发现问题（Sprint 27 起引入）。
+- **旁观者清**：解题 agent 当局者迷，巡查指导器作为第三者宏观审视完整行为轨迹，全局视角更容易发现问题。
 - **证据驱动**：巡查指导器的所有干预都必须基于轨迹中的事实（FACT/LIKELY 推论分级），POSSIBLE 只能作为建议，DISPROVED 立即撤销。
-- **渐进式增强**：每个 Sprint 聚焦一个能力域，改动遵循"最小侵入"原则（新增模块/可选参数，不破坏已验证接口）。
+- **渐进式增强**：每次迭代聚焦一个能力域，改动遵循"最小侵入"原则（新增模块/可选参数，不破坏已验证接口）。
 - **失败要快**：收敛策略要求解不出的题快速收手（连续 20 步无 flag 线索即重新审视），不耗满步数做无效探测。
 
 ### 1.4 版本演进与快照说明
 
-本版本是 Sprint 32.10 之后的功能快照（2026-08-02），属于**精英单兵**基线，核心能力栈：
+本版本是近期功能快照（2026-08-02），属于**精英单兵**基线，核心能力栈：
 
 | 能力域 | 说明 |
 |--------|------|
@@ -87,7 +87,7 @@ WING-Falcon 的设计贯穿以下理念：
 - **总指挥（commander）**：无上层调度器；每个任务在独立进程中由单个引擎完成。
 - **Docker 工具链**：无 docker SDK 后端；远程执行统一走 SSH（Kali 沙箱）或纯内置工具。
 
-> ⚠️ 说明：`main.py` 中存在一行对 `ctf_agent.bus.message_bus` 的历史引用（Sprint 12 遗留），该模块在本发布包中不存在；`tools/__init__.py` 的 `default_tools()` 签名也不含 `message_bus` 参数。本版本**推荐**使用 `solve.py` 子进程协议或纯内置模式运行，避免该遗留路径。
+> ⚠️ 说明：`main.py` 中存在一行对 `ctf_agent.bus.message_bus` 的历史引用（遗留），该模块在本发布包中不存在；`tools/__init__.py` 的 `default_tools()` 签名也不含 `message_bus` 参数。本版本**推荐**使用 `solve.py` 子进程协议或纯内置模式运行，避免该遗留路径。
 
 ---
 
@@ -270,14 +270,14 @@ Observation: <工具返回结果>
 
 ### 3.2 输出解析器：parse_llm_output
 
-LLM 输出解析是 ReAct 循环的咽喉，`parse_llm_output(text) -> ParsedAction` 对 LLM 的各种"坏习惯"做了大量容错（历经 Sprint 14/15/20/32.4b 多轮修复）：
+LLM 输出解析是 ReAct 循环的咽喉，`parse_llm_output(text) -> ParsedAction` 对 LLM 的各种"坏习惯"做了大量容错（历经多轮修复）：
 
 1. **Final Answer 优先**：`Final\s*Answer\s*:\s*(.+)` 大小写不敏感、冒号后可有空格；答案去除尾随引号。
 2. **Action 字段 Markdown 装饰剥离**：LLM 经常输出 `**Action:** ssh_exec` 或 `Action: \`ssh_exec\``，正则 `Action(?!\s*:?\s*Input\b)\s*:?\s*\*{0,2}\s*:?\s*\`?([a-z_][a-z0-9_]*)` 只匹配工具名格式（`[a-z_][a-z0-9_]*`），并加负向前瞻避免把 "Action Input" 中的 "Input" 误解析为工具名。
 3. **Action Input 多行 JSON**：`Action\s*Input\s*:\s*(.*?)` 到下一个字段或结尾；支持 ```json``` 代码块包裹、markdown 加粗（`**{...}**`）、尾随逗号。
-4. **别名回退（Sprint 20）**：LLM 偶尔输出 `Input:` / `Args:` / `Parameters:` / `参数:` 等，用别名正则二次匹配。
-5. **裸 JSON 回退（Sprint 20）**：若 Action 匹配但 Action Input 缺失，尝试从文本中提取首个 `{...}` JSON 对象（LLM 漏写 "Action Input:" 前缀的场景）。
-6. **Thought 回退（Sprint 20）**：LLM 经常省略 "Thought:" 前缀直接输出 "Action: ..."，此时取 Action/Final Answer 前的文本作为 thought，避免"无推理盲动"。
+4. **别名回退**：LLM 偶尔输出 `Input:` / `Args:` / `Parameters:` / `参数:` 等，用别名正则二次匹配。
+5. **裸 JSON 回退**：若 Action 匹配但 Action Input 缺失，尝试从文本中提取首个 `{...}` JSON 对象（LLM 漏写 "Action Input:" 前缀的场景）。
+6. **Thought 回退**：LLM 经常省略 "Thought:" 前缀直接输出 "Action: ..."，此时取 Action/Final Answer 前的文本作为 thought，避免"无推理盲动"。
 7. **空输出识别**：空字符串返回 `is_valid=False, parse_error="empty output"`，引擎对空输出有专门的免费重答机制（见 §3.5）。
 
 `ParsedAction` 结构：
@@ -304,7 +304,7 @@ class ParsedAction:
 4. **RAG 检索**：任务开始时一次性检索相似历史方案（`RAGRetriever.retrieve(task)`），不每轮刷新（省 LLM 调用）。
 5. **短路退出检查**：每步开始前检查 stop 信号与巡查点。
 6. **巡查**：`coordinator.should_check(step_no, max_steps)` 决定是否巡查（详见 §4）。
-7. **LLM 调用（三层容错）**：`llm.chat(messages, extra=thinking_extra)`，异常时重试 2 次（间隔 2s）→ pro 降级重试 → 全部失败则注入提示跳过本步继续（Sprint 32.8）。
+7. **LLM 调用（三层容错）**：`llm.chat(messages, extra=thinking_extra)`，异常时重试 2 次（间隔 2s）→ pro 降级重试 → 全部失败则注入提示跳过本步继续。
 8. **解析与分支**：
    - `is_final`：反幻觉检查（必须 ≥1 次有效工具调用，否则拒绝并注入提示）；通过后走多次提交逻辑或直接成功。
    - `is_valid=False`：空输出走免费重答；格式错误累计到 `max_format_errors` 后熔断失败。
@@ -313,11 +313,11 @@ class ParsedAction:
 10. **Observation 回灌**：构造 `Observation: <文本>` 加入短期记忆；连续空 observation ≥2 次注入恢复提示。
 11. **熔断检查**：`breaker.check(step)`，`should_terminate` 则失败返回；`should_inject_hint` 则提示前置。
 12. **range_control 快速终止**：若 `range_control verify` 观测到 "Flag verified" 等成功标志，立即提取 flag 并成功返回（避免 verify 成功后仍继续消耗步数）。
-13. **步数推进**：`while True` + 步进（Sprint 32.4b 修复了 `for range` 一次性求值导致 extend_steps 无效的 bug）。
+13. **步数推进**：`while True` + 步进（修复了 `for range` 一次性求值导致 extend_steps 无效的 bug）。
 
 ### 3.4 反幻觉机制
 
-反幻觉是 WING-Falcon 的硬约束（Sprint 14-17 多轮强化），引擎层面有两道闸门：
+反幻觉是 WING-Falcon 的硬约束（多轮强化），引擎层面有两道闸门：
 
 **闸门一：无工具调用直接 Final Answer = 幻觉**
 ```python
@@ -336,7 +336,7 @@ if not any(s.action and not s.is_error for s in steps):
 
 ### 3.5 空输出与格式错误容错
 
-引擎对"模型端空输出"与"格式错乱"分别处理（Sprint 7 P0-1）：
+引擎对"模型端空输出"与"格式错乱"分别处理：
 
 | 场景 | 处理 |
 |------|------|
@@ -349,7 +349,7 @@ if not any(s.action and not s.is_error for s in steps):
 
 ### 3.6 思考模式（thinking mode / reasoning_effort）
 
-Sprint 26 起，对 DeepSeek 系模型启用思考模式（thinking_mode）：模型先输出思维链（reasoning_content）再输出最终回答（content），提升准确性。`_thinking_extra()` 按以下优先级选择 `reasoning_effort`：
+对 DeepSeek 系模型启用思考模式（thinking_mode）：模型先输出思维链（reasoning_content）再输出最终回答（content），提升准确性。`_thinking_extra()` 按以下优先级选择 `reasoning_effort`：
 
 1. `force_max_thinking=True`（重试场景）→ `max`
 2. hard/extreme 难度 → `max`
@@ -370,7 +370,7 @@ Sprint 26 起，对 DeepSeek 系模型启用思考模式（thinking_mode）：�
 - **上限**：达到 `max_submissions` 后不再调用 handler，注入提示让 agent 继续工具分析（不直接退出），同时累计 `consecutive_format_errors` 防止反复 Final Answer 死循环。
 - 无 handler 时（传统单次模式）直接成功返回。
 
-### 3.8 步数软截断（Sprint 32.4b）
+### 3.8 步数软截断
 
 旧实现 `for step_no in range(1, max_steps+1)` 在进入循环时一次性求值，协调器 `extend_steps` 即使更新了 `self.max_steps` 也不会延长循环。新实现改为：
 
@@ -385,7 +385,7 @@ while True:
 
 配合熔断器的 `has_recent_progress()`（`progress_grace_seconds` 内无新 observation 才退出），实现"优先 LLM 软截断（MUST 指导 + 加步），不做严格硬截断"。
 
-### 3.9 LLM 调用三层容错（Sprint 32.8）
+### 3.9 LLM 调用三层容错
 
 引擎每步的 LLM 调用有三层容错（对应代码中的嵌套 try）：
 
@@ -434,7 +434,7 @@ SYSTEM_PROMPT_TEMPLATE =
 
 #### 3.11.2 五阶段自主解题方法论（AUTONOMOUS_METHODOLOGY）
 
-Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"：
+移除了具体攻击提示，改为教 LLM"如何自己发现 X"：
 
 | 阶段 | 目标 | 步数参考 |
 |------|------|----------|
@@ -444,7 +444,7 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 | 阶段 4：攻击执行（Exploitation） | 每次只调 1 个工具；必读 Observation 完整响应；失败即换方向 | N 步 Action |
 | 阶段 5：验证与提交（Validation） | flag 格式确认；verify 接口验证；拿不到老实报告失败 | 1 步 Final Answer |
 
-**假设验证与证伪机制（Sprint 32.4 强制纪律）**：
+**假设验证与证伪机制（强制纪律）**：
 
 - 建立假设时 Thought 必须写全三要素：**假设 A**（如"校验逻辑是逐字符标准 MD5"）+ **预期 B**（如"目标表与 md5(单字符) 匹配"）+ **验证**（用什么工具验证 B）；
 - B 成立 → 继续用 A 推进；**B 不成立 → 立即放弃 A**，检查输入变换（查表/拼接/异或），切到假设 C，**不要在旧假设上反复消耗步数**；
@@ -464,13 +464,13 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 - 直接读取环境中的 secret.txt（必须通过 verify 接口）；
 - **第 1 步直接 Final Answer**（无工具调用 = 幻觉，会被引擎自动拒绝）。
 
-**无回显 / 盲注类题型（Sprint 21，no_echo_ssti 复盘）**：页面不回显渲染结果时用时间盲注 / 报错注入 / 写文件再读（RCE 后写 static/out.txt 再 http_request 读取）/ DNS 外带；flag 必须真实出现在 observation 中；Thought 不得虚构工具返回。
+**无回显 / 盲注类题型（no_echo_ssti 复盘）**：页面不回显渲染结果时用时间盲注 / 报错注入 / 写文件再读（RCE 后写 static/out.txt 再 http_request 读取）/ DNS 外带；flag 必须真实出现在 observation 中；Thought 不得虚构工具返回。
 
-**Web 页面交互入口优先（Sprint 21，bypass1 复盘）**：首页 HTML 的 form/input/button 是真实入口，先按表单逻辑测参数再爆破；页面标题/注释/提示文本是核心线索；参数测试要"对比基线"；不要在目录爆破上消耗 >5 步。
+**Web 页面交互入口优先（bypass1 复盘）**：首页 HTML 的 form/input/button 是真实入口，先按表单逻辑测参数再爆破；页面标题/注释/提示文本是核心线索；参数测试要"对比基线"；不要在目录爆破上消耗 >5 步。
 
-**共享靶机 flag 定位（Sprint 22，round5 复盘）**：RCE 后找 flag 优先级——① 按题目标题匹配 `/flag_<关键词>`；② 列出全部 `/flag*` 逐个比对；③ 才考虑环境变量/数据库。不要深挖共享靶机上的无关遗留文件（诱饵）。
+**共享靶机 flag 定位（round5 复盘）**：RCE 后找 flag 优先级——① 按题目标题匹配 `/flag_<关键词>`；② 列出全部 `/flag*` 逐个比对；③ 才考虑环境变量/数据库。不要深挖共享靶机上的无关遗留文件（诱饵）。
 
-**框架漏洞套路库（Sprint 23，ThinkPHP 复盘）**：
+**框架漏洞套路库（ThinkPHP 复盘）**：
 
 - ThinkPHP 3.x assign+display 模板注入链（`_templateFile` 覆盖 → LFI）；日志包含 RCE（UA 注入 `<?php system($_GET['c']);?>` → 包含 Runtime/Logs 日志）；
 - ThinkPHP 5.x 经典 RCE：`?s=index/\think\App/invokefunction&function=call_user_func_array&vars[0]=system&vars[1][]=id`；
@@ -478,7 +478,7 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 - PHP 反序列化 POP 链构造三陷阱：private 属性长度公式 `1+len(class)+1+len(prop)`（不是 len 直接拼接）；PHP 8.4 参数类型严格（readfile 第二参传 [] → TypeError，system/passthru/exec 可行）；null 字节传输必须用 POST；
 - 源码分析收敛规则：框架源码分析 ≤5 步、.git 泄露 ≤3 步、确认 LFI 后直接用。
 
-**JWT crack 套路（Sprint 23，jwt_crack 复盘）**：提取 JWT → base64 解码 header+payload → 爆破密钥（PyJWT/hashcat）→ 签发伪造 JWT → 查看完整响应 body → 提取 flag。⛔ action_input JSON 解析失败（is_error=true）时不能直接提交 Final Answer。
+**JWT crack 套路（jwt_crack 复盘）**：提取 JWT → base64 解码 header+payload → 爆破密钥（PyJWT/hashcat）→ 签发伪造 JWT → 查看完整响应 body → 提取 flag。⛔ action_input JSON 解析失败（is_error=true）时不能直接提交 Final Answer。
 
 #### 3.11.4 题型专项强化（内置于提示词）
 
@@ -503,13 +503,13 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 - 每次只能调用一个工具；Action Input 必须是合法 JSON；Action 字段只能是工具名（不含参数/括号）；
 - Observation 以 ERROR 开头 = 工具失败，应修正参数或换工具；
 - **逐字节完整读取 Observation 响应体**（即使 HTTP 2xx/4xx，body 常藏 flag/线索/错误原因）；短响应往往是 JSON 错误码或重定向提示，必须读；base64 片段先解码；
-- Thought 不能为空（Sprint 20）：写出已知信息 + 下一步意图 + 关键参数计算（泄露地址后写 `leaked=0x..., base=leaked-offset, target=...`）。
+- Thought 不能为空：写出已知信息 + 下一步意图 + 关键参数计算（泄露地址后写 `leaked=0x..., base=leaked-offset, target=...`）。
 
-#### 3.11.6 收敛与放弃策略（Sprint 22）
+#### 3.11.6 收敛与放弃策略
 
 - **连续 20+ 步未出现任何 flag 线索**（flag 模式/新端点/新文件）时必须停下来重新审视：是否环境死局（页面恒回显固定内容/无表单无 JS/所有路径同一 fallback/提交无差异 → 果断 Final Answer 报告，不要继续爆破）、是否思路重复（同一工具换参数 >3 次仍无新线索 → 换方向）、是否利用 3 次失败（→ 换思路）；
 - 目录爆破/参数枚举/无差异探测消耗 >8 步即收敛；收敛前在 Thought 写明已尝试的 2-3 条路径与结论，保证失败报告有信息量；
-- **flag 已得即终（Sprint 22.5）**：一旦 Observation 中看到完整 flag 文本（格式合理、来自靶机/附件），**立即 Final Answer**，禁止再开新连接验证/试其他利用链/比对多个 flag 文件；提交前在 Thought 写明该 flag 来自哪一步的哪个 Observation（可追溯防幻觉）。
+- **flag 已得即终**：一旦 Observation 中看到完整 flag 文本（格式合理、来自靶机/附件），**立即 Final Answer**，禁止再开新连接验证/试其他利用链/比对多个 flag 文件；提交前在 Thought 写明该 flag 来自哪一步的哪个 Observation（可追溯防幻觉）。
 
 ---
 
@@ -517,7 +517,7 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 
 ### 4.1 设计哲学：旁观者清
 
-巡查指导器（`ctf_agent/agent/coordinator.py`）是 Sprint 27 引入的核心智能模块，设计思想一句话：**旁观者清，当局者迷**。解题 agent 专注于当下，可能陷入困境或方向走错；Coordinator 作为第三者宏观审视完整行为轨迹，全局视角更容易发现问题，在无人监管独立运行时**代替人提供战术指导**。
+巡查指导器（`ctf_agent/agent/coordinator.py`）是核心智能模块，设计思想一句话：**旁观者清，当局者迷**。解题 agent 专注于当下，可能陷入困境或方向走错；Coordinator 作为第三者宏观审视完整行为轨迹，全局视角更容易发现问题，在无人监管独立运行时**代替人提供战术指导**。
 
 设计原则：
 
@@ -526,7 +526,7 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 3. **知识增强**：查询 RAG / Skill 库辅助判断，提供更专业的指导。
 4. **两级分析**：先规则预检（快速，不调 LLM），再 LLM 深度分析（精准）。
 
-### 4.2 触发规则（Sprint 31 动态干预频率）
+### 4.2 触发规则（动态干预频率）
 
 `Coordinator.should_check(step_no, max_steps)` 决定是否巡查：
 
@@ -539,7 +539,7 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 | 异常触发 | 连续 `max_errors`（3）个错误步 → 立即触发 |
 | 兜底 | 倒数 `early_exit_steps`（20）步时至少巡查一次 |
 
-### 4.3 两级分析（Sprint 30 优化）
+### 4.3 两级分析（优化）
 
 `Coordinator.analyze(trajectory, challenge_type, ...)` 返回 `CoordinatorGuidance`，分两级：
 
@@ -564,7 +564,7 @@ Sprint 16 起移除了具体攻击提示，改为教 LLM"如何自己发现 X"�
 
 **降级模式（无 LLM）**：L1-B 软线索也作为干预依据（priority=SHOULD）。
 
-### 4.4 推论分级框架（Sprint 32.6 核心改造）
+### 4.4 推论分级框架（核心改造）
 
 Coordinator 对轨迹的每次分析都基于推论分级，所有判断分为四个等级，跨巡查持久化在 `belief_state` 列表（`[{id, statement, level, evidence, action}]`）：
 
@@ -579,20 +579,20 @@ Coordinator 对轨迹的每次分析都基于推论分级，所有判断分为�
 
 ### 4.5 禁忌列表（forbidden_actions）
 
-Sprint 31 引入：已确认无效的操作（如 "hashcat 爆破 cloud.zip 密码"连续失败）加入禁忌列表。
+引入：已确认无效的操作（如 "hashcat 爆破 cloud.zip 密码"连续失败）加入禁忌列表。
 
 - **来源**：L2 LLM 分析时生成，仅允许基于 FACT/DISPROVED 推论（不得基于 POSSIBLE）；
 - **拦截**：`intercept_forbidden(action, action_input)` 在**巡查间隔之外**也被引擎调用（工具执行前），关键词匹配命中即拦截并重定向 agent，不再浪费步数；
-- **移除**：推论被证否（DISPROVED）时自动清理对应禁忌项；agent 用某操作取得突破时通过 `remove_forbidden` 撤销误判（Sprint 32.4c 自我纠错）。
+- **移除**：推论被证否（DISPROVED）时自动清理对应禁忌项；agent 用某操作取得突破时通过 `remove_forbidden` 撤销误判（自我纠错）。
 
 ### 4.6 MUST / SHOULD 强制机制
 
-- **MUST（必须执行）**：用于明显方向错误 / 死循环 / 禁忌操作。Sprint 32.4 强化：MUST 指导必须给出**强制工具链切换**——明确"停止 X，改用 Y 工具/方法"，不要说"换个思路"这种空话。
+- **MUST（必须执行）**：用于明显方向错误 / 死循环 / 禁忌操作。MUST 指导必须给出**强制工具链切换**——明确"停止 X，改用 Y 工具/方法"，不要说"换个思路"这种空话。
 - **SHOULD（建议执行）**：用于软线索/改进建议，agent 可结合实际判断。
-- **持久注入**：MUST 指导在引擎侧连续重复注入 3 次（`must_repeat_left=2`，本步 + 后续 2 步），防止"注入一次被忽略"（#2501 Blast 复盘：协调器 step10 下达 MUST，agent 却继续 MD5 穷举 20 步）。
-- **未执行检测**：上次 MUST 后一个巡查间隔内主导工具未变**且无实质进展** → 判定 MUST 未执行，升级为 L1-A 硬问题直接干预，并把该操作加入禁忌列表。若 agent 虽工具未变但持续有新 observation（有效推进），交由 L2 LLM 全局判断（#2516 复盘防误判）。
+- **持久注入**：MUST 指导在引擎侧连续重复注入 3 次（`must_repeat_left=2`，本步 + 后续 2 步），防止"注入一次被忽略"（历史复盘：协调器 step10 下达 MUST，agent 却继续 MD5 穷举 20 步）。
+- **未执行检测**：上次 MUST 后一个巡查间隔内主导工具未变**且无实质进展** → 判定 MUST 未执行，升级为 L1-A 硬问题直接干预，并把该操作加入禁忌列表。若 agent 虽工具未变但持续有新 observation（有效推进），交由 L2 LLM 全局判断（历史复盘防误判）。
 
-### 4.7 自我纠错（Sprint 32.4c）
+### 4.7 自我纠错
 
 Coordinator 承认"我之前的判断不一定正确"，用后续轨迹验证自己：
 
@@ -636,7 +636,7 @@ class CoordinatorGuidance:
     belief_state: list[dict]          # 推论清单 [{id, statement, level, evidence, action}]
 ```
 
-巡查结果通过 `on_coordinator` 回调以 `{"type":"coordinator", ...}` JSONL 行输出（Sprint 29），完整透传 reflection 与 belief_state（Sprint 32.7），便于调用器显示完整日志。
+巡查结果通过 `on_coordinator` 回调以 `{"type":"coordinator", ...}` JSONL 行输出，完整透传 reflection 与 belief_state，便于调用器显示完整日志。
 
 ### 4.11 巡查器与 ReAct 引擎的协作时序
 
@@ -674,7 +674,7 @@ class CoordinatorGuidance:
         └─ 命中禁忌 → 注入拦截提示 → 步数 +1 → 重新让 LLM 输出
 ```
 
-**MUST 持久注入的强制力来源**（#2501 Blast 复盘修复）：
+**MUST 持久注入的强制力来源**（历史复盘修复）：
 
 1. MUST 指导连续注入 3 次，agent 想忽略也难；
 2. 一个巡查间隔后主导工具未变 + 无实质进展 → L1-A 判定"MUST 指令未被执行"再次 MUST 干预；
@@ -779,7 +779,7 @@ class Skill:
     tags / tools               # 标签与工具链
     script_ref: str            # 关联快速解题脚本
     source_tasks: list[str]    # 来源题目（最多保留 8 条）
-    pattern_features: list[str] # 套路特征（跨题匹配，Sprint 28）
+    pattern_features: list[str] # 套路特征（跨题匹配）
     version: int               # 合并升级时 +1
     use_count / success_count  # 使用统计
     score()                    # 价值分 = success*3 + use*1 - age*0.05
@@ -792,7 +792,7 @@ class Skill:
 3. **使用反馈**：`mark_used(id, success)` 更新统计；
 4. **淘汰**：`prune()` 按方向保留 Top-40（`_MAX_PER_CATEGORY`），淘汰长期零命中/低分条目（`min_score=-5.0`）。
 
-**检索**（Sprint 28 起基于套路特征而非题目名称）：
+**检索**（基于套路特征而非题目名称）：
 
 - `search(query, category, top_k)`：文本相关性（Jaccard，0-10 分）+ 套路特征命中（pattern_features 子串命中，每命中 +1，上限 6）+ 价值分 *0.1；
 - `search_by_pattern(observation_text, ...)`：做题中动态检索，要求套路特征至少命中 2 个（避免误匹配）；
@@ -801,7 +801,7 @@ class Skill:
 
 ### 5.7 抽象 Skill 库：skills/ 包
 
-`ctf_agent/skills/`（Sprint 16 引入）提供**两层 Skill 设计**：
+`ctf_agent/skills/` 提供**两层 Skill 设计**：
 
 - **ABSTRACT（抽象）**：按 vuln_class 抽象（如 `cbc_bit_flipping`、`ssti_bypass`、`jwt_weak_secret`），跨题可重用，含 recon_signatures（识别特征）、recon_steps（侦查步骤）、exploit_template（攻击模板骨架）、tool_chain（推荐工具链）；
 - **CONCRETE（具体）**：1 题 1 Skill，提供具体场景参考，带 `source_challenge_id` 与成功次数。
@@ -824,7 +824,7 @@ class Skill:
 
 1. `format_hint(challenge_id)`：失败历史摘要（步数/原因/错误答案/用过工具/前 3 步动作 + 建议），标注 `[失败记忆]`；
 2. `format_type_hint(type, difficulty)`：**(type, difficulty) 级别的通用解题提示**（cross-challenge 知识共享），内置 forensics/reverse/crypto/web/osint 各难度的手写提示词（如 forensics medium → 立即用 mem_xor_analyze；osint medium → 严格 4 步上限 + 禁止 strings/binwalk/steghide）；
-3. `format_reflection_hint(challenge_id, type, difficulty)`：**演化反思**（Sprint 10 Stage 10），基于失败轨迹推断失败模式 + 推荐未用过的工具。
+3. `format_reflection_hint(challenge_id, type, difficulty)`：**演化反思**（Stage 10），基于失败轨迹推断失败模式 + 推荐未用过的工具。
 
 **演化器（Reflector）**：`reflect()` 自动分类失败模式（8 类：LOOP_TOOL_USAGE / REPEATED_ACTION / WRONG_APPROACH / NULL_OBSERVATION / FORMAT_ERROR / MAX_STEPS / TOKEN_WASTE / UNKNOWN），按题型工具表 + 失败模式优先级推荐 3 个未用过的工具，生成 1-3 行改进提示，持久化到 `data/failed_trajectories/_reflections/<challenge_id>.jsonl`。
 
@@ -833,12 +833,12 @@ class Skill:
 ### 5.9 经验闭环：成功经验去标识化回写
 
 - **analyzer.py**：`Analyzer` 生成 writeup（模板生成，默认不调 LLM 省 API；可选 LLM 增强）与完整 Markdown 报告（含时间线 + 统计分析 + 改进建议）；`analyze_and_store()` 写入长期记忆；
-- **experience.py**：`ingest_solution()` 把成功解题写入 LTM（Sprint 16 补上"RAG 永不增长"的断环）。**安全红线**：写入 LTM 的 writeup 绝不包含真实 flag——`redact_flags()` 把 `xxx{...}`、32+ 位十六进制长串替换为 `<REDACTED_FLAG>`，绝对路径/内存地址替换为占位符（Sprint 28 与 skill_learner 保持一致）；doc_id 由"任务 + 工具链"哈希派生，同类经验只写一次（去重防膨胀）；
+- **experience.py**：`ingest_solution()` 把成功解题写入 LTM（补上"RAG 永不增长"的断环）。**安全红线**：写入 LTM 的 writeup 绝不包含真实 flag——`redact_flags()` 把 `xxx{...}`、32+ 位十六进制长串替换为 `<REDACTED_FLAG>`，绝对路径/内存地址替换为占位符（与 skill_learner 保持一致）；doc_id 由"任务 + 工具链"哈希派生，同类经验只写一次（去重防膨胀）；
 - **skill_learner.py**：`learn_skill()` 从一次解题提炼 Skill。两种生成方式：
   - **模板生成（默认，不调 LLM）**：抽取工具调用链 + 关键 Observation 特征 + 成功路径，组织成 If-Then 结构化正文（`_template_body`），全文脱敏；
   - **LLM 生成（可选）**：`_LLM_SKILL_PROMPT` 让 LLM 归纳"识别/步骤/坑"，严格规则：禁止拷贝绝对路径与地址、禁止记录 flag 明文、必须用"条件→动作"格式；
   - 成功任务 → 正向套路 Skill；失败任务 → `[避坑]` 前缀的避坑 Skill（仅在有明确失败信号时生成，避免噪声）；
-  - **套路特征提取**（Sprint 28）：`_extract_pattern_features` 从题目 + observation 中提取技术关键词（RSA/CBC/XOR/SSTI/checksec/...），用于跨题匹配；
+  - **套路特征提取**：`_extract_pattern_features` 从题目 + observation 中提取技术关键词（RSA/CBC/XOR/SSTI/checksec/...），用于跨题匹配；
   - 关联快速解题脚本：`_match_quick_solve` 让 `skill.script_ref` 指向 scripts/quick_solve 注册表中的模板脚本（脚本库不在本发布包内，缺失时静默降级）。
 
 ### 5.10 记忆注入优先级（引擎 _inject_context 拼接顺序）
@@ -887,7 +887,7 @@ class Tool(ABC):
 
 关键设计：
 
-- **JSON 容错解析**（Sprint 32.2 `_robust_json_loads`）：LLM 输出的 Action Input 常带尾随逗号、JSON 后跟说明文字、markdown 加粗装饰。逐级降级修复：① 去尾随逗号直解；② 截取首个 `{` 到末个 `}` 再解（处理 Extra data）；③ 去 markdown 装饰重试；
+- **JSON 容错解析**（`_robust_json_loads`）：LLM 输出的 Action Input 常带尾随逗号、JSON 后跟说明文字、markdown 加粗装饰。逐级降级修复：① 去尾随逗号直解；② 截取首个 `{` 到末个 `}` 再解（处理 Extra data）；③ 去 markdown 装饰重试；
 - **异常兜底**：`execute()` 内任何异常被捕获并转为 `ToolResult(output="ERROR: <类型>: <消息>", is_error=True)`，不打断 ReAct 循环——熔断器的重复动作检测依赖 Observation 可识别错误；
 - **schema()**：返回 `{name, description, parameters}` 供 prompt 渲染。
 
@@ -903,9 +903,9 @@ class Tool(ABC):
 
 ```python
 tools = [*builtin_tools(), http_tool()]        # L1 基础
-tools.append(ExploitTemplateTool())            # Sprint 19 纯 Python
+tools.append(ExploitTemplateTool())            # 纯 Python
 if enable_crypto: tools.extend(crypto_tools()) # crypto_rsa / crypto_classic
-tools.extend(encoding_helper_tools())          # Sprint 23 编码辅助
+tools.extend(encoding_helper_tools())          # 编码辅助
 if ssh_client is not None:
     tools.extend(ssh_tools(ssh_client))        # ssh_exec/ssh_python/ssh_upload
     if enable_binary_analyzer: tools.append(BinaryAnalyzeTool(ssh_client))
@@ -1007,7 +1007,7 @@ if ssh_client is not None:
 LLM 层有两个客户端：
 
 - **`llm/client.py`（LLMClient）**：基础客户端，封装 OpenAI Python SDK（同步 `chat` + 异步 `achat`），默认直连 `OPENAI_BASE_URL`；`_parse_response` 兼容 DeepSeek 推理模型的 `reasoning_content` 回退；`ChatResult` 含 `content/usage/model/finish_reason/reasoning_content/raw`；
-- **`llm/routed.py`（RoutedLLMClient）**：带三级路由的客户端（Sprint 17+19+32.5/32.8/32.9 迭代），`solve.py` 与引擎容错路径使用。
+- **`llm/routed.py`（RoutedLLMClient）**：带三级路由的客户端（多轮迭代），`solve.py` 与引擎容错路径使用。
 
 ### 7.2 三级路由策略（zen → fallback → pro）
 
@@ -1020,18 +1020,18 @@ Phase 1: zen（opencode.ai 免费层，deepseek-v4-flash-free）
     - 5xx 连续 3 次 → 跳过 zen 60s；连续失败达阈值 → 动态标记 down
     - 全部失败 → 记录动态故障 → 进入 Phase 2
 Phase 2: fallback（官方 deepseek-v4-flash）
-    - 单次默认超时 30s（Sprint 32.7: 60→30s，加速暴露半死连接）
+    - 单次默认超时 30s（60→30s，加速暴露半死连接）
     - 重试 llm_max_retries+1 次，失败间隔 sleep(2)
     - 冒烟测试标记 False 或动态故障跳过期 → 直接跳过
     - 全部失败 → 记录动态故障 → 进入 Phase 3
-Phase 3: pro（deepseek-v4-pro 兜底，Sprint 32.8）
+Phase 3: pro（deepseek-v4-pro 兜底）
     - 默认超时 120s；冒烟/动态健康检查
     - 这是"长期全自动运行的关键"：中途某 provider 故障不能整题 0 步失败
 ```
 
-`model_tier` 取值：`flash`（默认三级路由）/ `pro`（先 flash 后 pro）/ `pro_only`（直接 pro）。⚠️ 注意：pro 路由自 Sprint 26 起 **deprecated**（`ENABLE_PRO_FALLBACK` 默认关闭，官方 flash 按难度调 thinking_mode 已可覆盖难题增强诉求，pro 成本高 3-5x 且慢 2x），但作为路由兜底仍保留实现。
+`model_tier` 取值：`flash`（默认三级路由）/ `pro`（先 flash 后 pro）/ `pro_only`（直接 pro）。⚠️ 注意：pro 路由已 **deprecated**（`ENABLE_PRO_FALLBACK` 默认关闭，官方 flash 按难度调 thinking_mode 已可覆盖难题增强诉求，pro 成本高 3-5x 且慢 2x），但作为路由兜底仍保留实现。
 
-### 7.3 动态 provider 健康状态（Sprint 32.8）
+### 7.3 动态 provider 健康状态
 
 冒烟测试标记不再是"终身制"：API 中途故障（限流/挂起）时实时降级，恢复后自动重新尝试。
 
@@ -1046,9 +1046,9 @@ _PROVIDER_RESET_SECONDS = 60.0     # 60s 无失败则计数清零（视为新的
 - `_provider_healthy(name)`：优先级 = 动态 down_until（中途故障）> 冒烟测试标记 > 默认 True；跳过期已过则清除故障状态允许重新探测；
 - `_should_try_zen()`：动态健康 + 旧的连续失败计数（≥5 次跳过 60s）双保险。
 
-**冒烟测试**（Sprint 32.5，冲榜场景）：`smoke_test()` 用 1-token "ping" 探测全部 provider 可用性；`apply_smoke_results()` / `apply_smoke_from_file("data/api_smoke.json")` 在 agent 子进程启动时应用 controller 领题前的探测结果，快速跳过不可用 provider（避免每次调用等 45s×3 超时重试）。
+**冒烟测试**（冲榜场景）：`smoke_test()` 用 1-token "ping" 探测全部 provider 可用性；`apply_smoke_results()` / `apply_smoke_from_file("data/api_smoke.json")` 在 agent 子进程启动时应用 controller 领题前的探测结果，快速跳过不可用 provider（避免每次调用等 45s×3 超时重试）。
 
-### 7.4 wall-clock 总超时（Sprint 32.9）
+### 7.4 wall-clock 总超时
 
 httpx 的 read timeout 防不了慢速流（slow-drip streaming）：服务器持续缓慢发 chunk（每次间隔 < read timeout），`ssl.read` 可能无限阻塞。`_call_with_wallclock(fn, timeout=45.0)` 用 daemon 线程 + `join(timeout)` 实现应用层硬总超时：
 
@@ -1056,7 +1056,7 @@ httpx 的 read timeout 防不了慢速流（slow-drip streaming）：服务器�
 - 超时后线程泄漏在后台，但 provider 会被动态标记 down（跳过期内不会反复创建）；
 - 三个 provider 的调用（zen/fallback/pro）都包在这个兜底里。
 
-### 7.5 思考模式参数注入（Sprint 26）
+### 7.5 思考模式参数注入
 
 `chat()` 内（`enable_thinking_mode=True` 时）：
 
@@ -1115,10 +1115,10 @@ t130  跳过期已过 → 清除故障状态 → 恢复探测 zen
 | 思维死锁 | 连续 5 轮相同 Thought | inject_hint（跳出循环） |
 | 文件膨胀 | SSH 工作目录 > 1GB（每 30s 节流检查） | inject_hint（清理临时文件） |
 
-**额外两个检测维度**（Sprint 6/7 补充，实际共八项）：
+**额外两个检测维度**（后续补充，实际共八项）：
 
-- **无效步数**（Sprint 6 P1）：同一 action 连续产生高度相似 Observation（字符级 Jaccard 相似度 ≥ 0.85，连续 5 次）→ inject_hint。比"重复动作"更宽松（参数可微变，只要输出类似就视为无效）；
-- **单步耗时**（Sprint 7 P1-1）：单步超过 `max_single_step_seconds=120s` → inject_hint（防止 docker build / long-running 命令卡死）。
+- **无效步数**：同一 action 连续产生高度相似 Observation（字符级 Jaccard 相似度 ≥ 0.85，连续 5 次）→ inject_hint。比"重复动作"更宽松（参数可微变，只要输出类似就视为无效）；
+- **单步耗时**：单步超过 `max_single_step_seconds=120s` → inject_hint（防止 docker build / long-running 命令卡死）。
 
 **成本核算**：`record_llm_call(total_tokens, model)` 每次 LLM 调用后累计，按模型查表定价（`_DEFAULT_PRICING`，含 deepseek-v4-flash/deepseek-chat/deepseek-reasoner/gpt-4o 等），假设 input:output = 3:1 用均价估算；未知模型不计费（避免误熔断）。
 
@@ -1132,11 +1132,11 @@ class BreakerAction:
     reason: str
 ```
 
-### 8.2 进展感知熔断（Sprint 32.4）
+### 8.2 进展感知熔断
 
 时间/步数熔断从"一刀切"改为**进展感知**：
 
-- **背景**：#2501 Blast 复盘——agent 第 47 步方向正确、刚发现关键线索（"MD5 输入是整个后缀"），却在 1200s 被时间熔断误杀；
+- **背景**：历史复盘——agent 第 47 步方向正确、刚发现关键线索（"MD5 输入是整个后缀"），却在 1200s 被时间熔断误杀；
 - **机制**：`check()` 中跟踪"最近一次实质进展"（新的非空 observation，`_last_progress_at`）。超过 `max_seconds` 后，若 `idle > progress_grace_seconds(120s)` 或超过 `hard_max_seconds`（默认 `max_seconds * 3`）才 terminate；有进展则自动延长；
 - **步数软截断**：`step_no > max_steps` 后不再立即 terminate，`has_recent_progress()` 返回 True 就继续（由时间熔断 3x 保险兜底），配合协调器 extend_steps 加步；
 - **原则**：方向正确、进展正常时绝不误杀；真正的硬兜底由 executor 侧 no_progress 检测（5-10 分钟无输出）承担。
@@ -1161,13 +1161,13 @@ class BreakerAction:
 | web | 1.0 | 标准 |
 | forensics / misc | 1.2 | 二进制解析/嵌套解密链需更多 |
 
-**时间下限**（尊重调用方传入值，难度只做下限兜底，Sprint 32.4 修复"medium 分支恒等 1200s 无视传入 1500s"的 bug）：
+**时间下限**（尊重调用方传入值，难度只做下限兜底，修复"medium 分支恒等 1200s 无视传入 1500s"的 bug）：
 
 - hard：≥ 2700s（45min），其中 pwn/forensics/reverse hard 进一步 ≥ 3000s；
 - medium：≥ 1200s（20min）；
 - easy/未知：≥ 900s（15min）。
 
-**动态扩展**（Sprint 27）：`extend_steps(additional=20)` 每次 +20 步，最多 2 次（总计可加 40 步），不超 `HARD_MAX_STEPS`。由巡查指导器 `extend_steps=true` 触发（引擎收到后调用 breaker.extend_steps 并同步 `self.max_steps`）。
+**动态扩展**：`extend_steps(additional=20)` 每次 +20 步，最多 2 次（总计可加 40 步），不超 `HARD_MAX_STEPS`。由巡查指导器 `extend_steps=true` 触发（引擎收到后调用 breaker.extend_steps 并同步 `self.max_steps`）。
 
 ### 8.4 熔断与巡查的协同
 
@@ -1247,7 +1247,7 @@ INIT ──→ EXECUTING ──→ DONE
 
 ### 10.2 独立求解入口（solve.py，对外稳定契约）
 
-**协议版本**：`1.1`（Sprint 26 起版本化）。任何"应用/调用器"（如 NSS Runner）只需以子进程方式运行：
+**协议版本**：`1.1`。任何"应用/调用器"（如 NSS Runner）只需以子进程方式运行：
 
 ```
 python -u -m ctf_agent.solve --task-file <path>
@@ -1257,7 +1257,7 @@ python -u -m ctf_agent.solve --task-file <path>
 
 ```json
 {
-  "challenge_id": "nss_2314",
+  "challenge_id": "nss_demo",
   "title": "题目名",
   "desc": "任务描述 (题面+附件路径+靶机URL+规则)",
   "type": "web",
@@ -1295,8 +1295,8 @@ python -u -m ctf_agent.solve --task-file <path>
 2. stdout 只输出 JSONL；第三方库的 print 被 `_ProtocolStdout` 包装为 log 行（协议不被污染）；
 3. 经验/技能/记忆/自学习全部在 agent 侧完成，全局共享；
 4. 无内部超时线程：子进程模型下，调用器负责硬超时 kill；
-5. 引擎构造含 SSH 连接，可能挂起（DNS/网络）→ `_build_engine_with_timeout` 150s 超时快速失败（Sprint 21 #2314 复盘修复）；
-6. stdin 统一分发器（Sprint 30）：单一线程读取所有 stdin 输入，按消息类型分发到 stop 标志或 submission 响应队列——修复了 stop-listener 与 submission-handler 竞争 stdin（以及 Windows selectors 不能注册 stdin 的 WinError 10038）的问题；
+5. 引擎构造含 SSH 连接，可能挂起（DNS/网络）→ `_build_engine_with_timeout` 150s 超时快速失败（历史复盘修复）；
+6. stdin 统一分发器：单一线程读取所有 stdin 输入，按消息类型分发到 stop 标志或 submission 响应队列——修复了 stop-listener 与 submission-handler 竞争 stdin（以及 Windows selectors 不能注册 stdin 的 WinError 10038）的问题；
 7. submission 队列 60s 超时（调用器崩溃时 agent 不永久挂起）。
 
 **flag 提取**（`_extract_flag`）：按正则优先级匹配 NSSCTF{...} / moectf{...} / flag{...} / CTF{...} / nssctf{...} / athena{...}，最后兜底 `[a-zA-Z_]+{...}` 通用模式（花括号内 ≥4 字符），再兜底整段文本（含 `{` `}` 且 <200 字符）。
@@ -1329,8 +1329,8 @@ FastAPI 应用，提供：
 以下是一个典型任务（单次提交模式）的 stdout 交互流（`#` 为注释，实际输出无注释）：
 
 ```jsonl
-{"type": "start", "protocol_version": "1.1", "challenge_id": "nss_2314", "title": "测试题", "challenge_type": "web", "difficulty": "easy", "max_steps": 60, "max_seconds": 1500.0, "max_submissions": 1, "model": "deepseek-v4-flash"}
-{"type": "log", "level": "INFO", "message": "求解启动: nss_2314 type=web difficulty=easy max_steps=60 model=deepseek-v4-flash"}
+{"type": "start", "protocol_version": "1.1", "challenge_id": "nss_demo", "title": "测试题", "challenge_type": "web", "difficulty": "easy", "max_steps": 60, "max_seconds": 1500.0, "max_submissions": 1, "model": "deepseek-v4-flash"}
+{"type": "log", "level": "INFO", "message": "求解启动: nss_demo type=web difficulty=easy max_steps=60 model=deepseek-v4-flash"}
 {"type": "step", "step_no": 1, "thought": "先做信息收集，读取题目附件源码", "action": "ssh_exec", "action_input": "{\"cmd\": \"cat /tmp/nss_arena/2314/app.py\"}", "observation": "from flask import Flask, request\napp = Flask(__name__)\n@app.route('/')\ndef index():\n    return 'hello'", "is_error": false, "is_final": false, "final_answer": "", "error_msg": "", "timestamp": 1754172000.0}
 {"type": "step", "step_no": 2, "thought": "发现 /flag 路由直接返回 flag，尝试访问", "action": "http_request", "action_input": "{\"url\": \"http://127.0.0.1:8080/flag\"}", "observation": "NSSCTF{test_flag_123}", "is_error": false, "is_final": false, "final_answer": "", "error_msg": "", "timestamp": 1754172005.0}
 {"type": "coordinator", "step_no": 10, "should_intervene": false, "priority": "SHOULD", "reason": "方向正确, 继续推进", "guidance": "", "extend_steps": false, "detected_issues": [], "forbidden_actions": [], "revert_guidance": false, "remove_forbidden": [], "analysis_summary": "L2 LLM 分析: 方向正确", "reflection": "推论均为 FACT: 源码确认 /flag 路由, step2 已观测到 flag 文本", "belief_state": [{"id": "B1", "statement": "入口存在且可用", "level": "FACT", "evidence": "step2 HTTP 返回 flag", "action": "keep"}]}
@@ -1446,16 +1446,16 @@ SSH / RAG / WebUI 依赖按需安装（paramiko、chromadb、fastapi、uvicorn�
 
 ### 12.6 性能指标与已知限制
 
-#### 12.6.1 实测参考（源自各 Sprint 复盘记录）
+#### 12.6.1 实测参考（源自历史复盘记录）
 
 | 指标 | 参考值 | 来源 |
 |------|--------|------|
-| 失败题平均耗时 | 约 753s（目标 ≤300s） | Sprint 22 失败题耗时复盘 |
+| 失败题平均耗时 | 约 753s（目标 ≤300s） | 失败题耗时复盘 |
 | 单轮任务时间上限 | 默认 1800s；进展感知可延长至 max_seconds×3 | 熔断器配置 |
 | easy reverse 题步数 | 3-6 步（strings + binary_analyze + try keys） | 失败缓存类型提示 |
 | medium reverse 题步数 | 8-15 步 | 同上 |
 | hard reverse 题步数 | 15-30 步 | 同上 |
-| 框架漏洞题（ThinkPHP 等） | 有套路库后 5-10 步（此前 120 步失败） | Sprint 23 复盘 |
+| 框架漏洞题（ThinkPHP 等） | 有套路库后 5-10 步（此前 120 步失败） | 复盘 |
 | SSH 单命令超时 | 60s（exec_cmd 默认） | ssh/client.py |
 | LLM 单次调用 wall-clock | 45s 硬总超时 | routed.py |
 
@@ -1468,7 +1468,7 @@ SSH / RAG / WebUI 依赖按需安装（paramiko、chromadb、fastapi、uvicorn�
 5. **思考模式依赖模型支持**：`reasoning_effort`/`extra_body.thinking` 是 DeepSeek 扩展字段，若切换非 DeepSeek 端点需设置 `ENABLE_THINKING_MODE=false`；
 6. **CLI 路径遗留引用**：`main.py` 中对 `ctf_agent.bus.message_bus` 的历史引用在本发布包不存在（§1.5），建议使用 `solve.py` 子进程路径；
 7. **本地靶场（range）需要 docker 环境**：range_control 依赖 Kali 侧 docker（本地练习场景），NSS 等竞赛场景默认禁用；
-8. **pro 模型 deprecated**：自 Sprint 26 起 pro 路由默认关闭，后续不再维护（保留实现仅供兜底）。
+8. **pro 模型 deprecated**：pro 路由默认关闭，后续不再维护（保留实现仅供兜底）。
 
 ---
 
@@ -1581,7 +1581,7 @@ cp .env.example .env
 | `FALLBACK_BASE_URL` | `https://api.deepseek.com/v1` | 官方兜底端点 |
 | `FALLBACK_MODEL` | `deepseek-v4-flash` | 官方兜底模型 |
 | `LLM_MAX_RETRIES` | `2` | zen/fallback 每层失败重试次数（实际尝试 N+1 次） |
-| `PRO_API_KEY` | （空） | pro 层 API Key（Sprint 26 deprecated，可选） |
+| `PRO_API_KEY` | （空） | pro 层 API Key（deprecated，可选） |
 | `PRO_BASE_URL` | `https://api.deepseek.com/v1` | pro 端点 |
 | `PRO_MODEL` | `deepseek-v4-pro` | pro 模型 |
 | `ENABLE_PRO_FALLBACK` | `false` | 是否启用 pro 回退（默认关闭，仅显式开启才生效） |
@@ -1917,21 +1917,21 @@ python minimal_caller.py
 | 反幻觉 | 强制 flag 来自工具观测、禁止编造/猜测的规则体系 |
 | 去标识化（脱敏） | 将 flag/绝对路径/内存地址替换为占位符后再入库 |
 
-### 15.2 Sprint 演进一览
+### 15.2 演进一览
 
-| Sprint 范围 | 主题 | 代表能力 |
+| 迭代阶段 | 主题 | 代表能力 |
 |-------------|------|----------|
-| Sprint 1-5 | 基础框架 | ReAct 引擎、L1 工具、SSH 接入 |
-| Sprint 6-10 | 工具增强 + 失败记忆 | 空 observation 兜底、mem_xor、失败轨迹缓存 + 演化反思、cross-challenge 知识共享 |
-| Sprint 11-12 | 题型扩展 | OSINT、APK、Sage、OCR、逆向搜索、地理编码 |
-| Sprint 13-16 | 深度能力 + 方法论 | ECDSA、angr、DES、Feistel、Web/Pwn 工具集、自主解题方法论、Skill 系统 |
-| Sprint 17-20 | 智能化 | LLM 路由（zen→fallback）、思考模式、自适应熔断、输出解析容错 |
-| Sprint 21-23 | 实战强化 | 无回显/盲注规则、共享靶机 flag 定位、框架漏洞库、LFI/编码辅助 |
-| Sprint 24-25 | 视觉与复盘 | magic bytes 修复、OCR 最佳实践、vision_analyze（MIMO）、密码题识别 |
-| Sprint 26 | 提交与思考 | 思考模式、多次提交机制、协议 v1.1、心跳 |
-| Sprint 27-29 | 巡查指导器 | Coordinator、动态扩展、两级分析、巡查日志回调 |
-| Sprint 30-31 | 巡查强化 | stdin 统一分发器、禁忌列表、动态干预频率、MUST 优先级 |
-| Sprint 32.x | 稳定性与纠错 | 进展感知熔断、MUST 持久注入、自我纠错、推论分级、wall-clock、动态健康、LLM 三层容错、软截断 |
+| 1-5 | 基础框架 | ReAct 引擎、L1 工具、SSH 接入 |
+| 6-10 | 工具增强 + 失败记忆 | 空 observation 兜底、mem_xor、失败轨迹缓存 + 演化反思、cross-challenge 知识共享 |
+| 11-12 | 题型扩展 | OSINT、APK、Sage、OCR、逆向搜索、地理编码 |
+| 13-16 | 深度能力 + 方法论 | ECDSA、angr、DES、Feistel、Web/Pwn 工具集、自主解题方法论、Skill 系统 |
+| 17-20 | 智能化 | LLM 路由（zen→fallback）、思考模式、自适应熔断、输出解析容错 |
+| 21-23 | 实战强化 | 无回显/盲注规则、共享靶机 flag 定位、框架漏洞库、LFI/编码辅助 |
+| 24-25 | 视觉与复盘 | magic bytes 修复、OCR 最佳实践、vision_analyze（MIMO）、密码题识别 |
+| 26 | 提交与思考 | 思考模式、多次提交机制、协议 v1.1、心跳 |
+| 27-29 | 巡查指导器 | Coordinator、动态扩展、两级分析、巡查日志回调 |
+| 30-31 | 巡查强化 | stdin 统一分发器、禁忌列表、动态干预频率、MUST 优先级 |
+| 32.x | 稳定性与纠错 | 进展感知熔断、MUST 持久注入、自我纠错、推论分级、wall-clock、动态健康、LLM 三层容错、软截断 |
 
 ### 15.3 配置键速查表（config.py 实际生效）
 
@@ -1948,7 +1948,7 @@ python minimal_caller.py
 
 ### 15.4 参考资料
 
-- `docs/CTF_AGENT_DESIGN.md`：WING-Falcon 早期（Sprint 28）设计文档；
+- `docs/CTF_AGENT_DESIGN.md`：WING-Falcon 早期设计文档；
 - `docs/CTF_AGENT_GUIDE.md`：完整使用指南（含 NSS Runner 集成示例）；
 - `_publish/wing/WING-Falcon/.env.example`：环境变量模板；
 - DeepSeek thinking mode 官方文档：`https://api-docs.deepseek.com/zh-cn/guides/thinking_mode`。

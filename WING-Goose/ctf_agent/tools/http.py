@@ -96,7 +96,7 @@ class HttpRequestTool(Tool):
             }
             # 注意: httpx 的 params 会完全替换 URL 中的 query string!
             # 只有显式传 params 时才使用; URL 已带 query (如 ?a=1) 时不传,
-            # 否则空 dict 会把已有 query 清空 (Sprint 21 修复: web 题参数丢失)
+            # 否则空 dict 会把已有 query 清空 (修复: web 题参数丢失)
             if params:
                 request_kwargs["params"] = params
             if method_upper in {"POST", "PUT", "PATCH"} and body is not None:

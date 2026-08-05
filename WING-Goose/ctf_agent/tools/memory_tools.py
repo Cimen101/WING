@@ -34,7 +34,7 @@ class RememberFactTool(Tool):
             },
             "value": {
                 "type": "string",
-                "description": "事实值，如 192.168.1.1 / 22,80,443 / Apache 2.4.49",
+                "description": "事实值，如 192.0.2.1 / 22,80,443 / Apache 2.4.49",
             },
         },
         "required": ["key", "value"],

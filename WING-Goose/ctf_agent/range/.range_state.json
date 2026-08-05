@@ -1,0 +1,38 @@
+{
+  "athena_heap_smash_v1": {
+    "name": "Heap_Smash_v1",
+    "flag": "athena{SkyUnghZn70ehVzsFyZ1DzmFlelOdMbx}",
+    "host_port": 8009,
+    "status": "running"
+  },
+  "athena_classy_who": {
+    "name": "Classy_who",
+    "flag": "athena{4isKeFas23cZgVAIbuo5mXiGhY192AK5}",
+    "host_port": 8010,
+    "status": "running"
+  },
+  "athena_fast_is_need": {
+    "name": "Fast_is_need",
+    "flag": "athena{gKfkEctqOn6dDyY1NbMlTmC2xjP0QTMZ}",
+    "host_port": 8011,
+    "status": "running"
+  },
+  "athena_narrow_des": {
+    "name": "Narrow_DES",
+    "flag": "athena{vFWWMWpBl60RiZDoidGTRJEUixakXbUn}",
+    "host_port": 8013,
+    "status": "running"
+  },
+  "athena_session_slip": {
+    "name": "Session_Slip",
+    "flag": "athena{rId3GTNOiSk71TmzZcxhuqxIkchlsLLD}",
+    "host_port": 8003,
+    "status": "running"
+  },
+  "athena_query_mirage": {
+    "name": "Query_Mirage",
+    "flag": "athena{ZiW7mFZ9f8JnRgHhVRuZNJr4XSYDkHRS}",
+    "host_port": 8005,
+    "status": "running"
+  }
+}

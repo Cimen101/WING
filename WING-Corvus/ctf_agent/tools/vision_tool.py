@@ -1,4 +1,4 @@
-"""L2 全模态识别工具 (Sprint 25 新增, Sprint 31 扩展全模态).
+"""L2 全模态识别工具 (新增, 扩展全模态).
 
 接入小米 MIMO-2.5 全模态模型, 支持图片/视频/音频理解:
 - 图片: 识别符号/图形/文字 (OCR 无法处理的抽象图形、密码符号、手写体等)
@@ -37,12 +37,12 @@ _MAX_OUTPUT = 6000
 _TRUNCATED_SUFFIX = "\n... (输出截断,共 {total} 字符)"
 
 # Kali 上执行的 Python 脚本 (用 base64 传参避免转义)
-# Sprint 31: 支持图片/视频/音频全模态
+# 支持图片/视频/音频全模态
 _VISION_SCRIPT = r'''import base64, json, sys, io, os, subprocess, urllib.request
 file_path = base64.b64decode(sys.argv[1]).decode("utf-8")
 question = base64.b64decode(sys.argv[2]).decode("utf-8")
 
-# Sprint 31: 按扩展名/魔数判断模态类型
+# 按扩展名/魔数判断模态类型
 def detect_modality(fp):
     ext = os.path.splitext(fp)[1].lower()
     IMG_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
@@ -219,7 +219,7 @@ def _truncate(text: str, max_len: int = _MAX_OUTPUT) -> str:
 
 
 class VisionAnalyzeTool(Tool):
-    """MIMO-2.5 全模态识别 (Sprint 25, Sprint 31 扩展全模态).
+    """MIMO-2.5 全模态识别 (扩展全模态).
 
     用途: 让多模态大模型理解图片/视频/音频并回答问题.
     适用: 符号识别 (图片密码题)、截图分析、视频帧分析、音频内容识别.
@@ -308,7 +308,7 @@ class VisionAnalyzeTool(Tool):
 
 
 def vision_tools(ssh_client: SSHClient) -> list[Tool]:
-    """创建视觉识别工具 (Sprint 25).
+    """创建视觉识别工具 ().
 
     Args:
         ssh_client: 已连接的 SSHClient 实例

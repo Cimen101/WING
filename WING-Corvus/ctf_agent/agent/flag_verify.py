@@ -1,4 +1,4 @@
-"""Flag 验证系统 (Sprint 36.2): 提交前轨迹检查 — 代码机制 + LLM 审查.
+"""Flag 验证系统: 提交前轨迹检查 — 代码机制 + LLM 审查.
 
 背景 (2026-08-05 hard5 复盘): agent 在 web 题中通过 GitHub API 抓取官方
 writeup.md 获得 flag 并直接提交, 轨迹看起来"有工具调用"但 flag 来源是非正常

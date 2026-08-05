@@ -4,7 +4,7 @@
 - Collection: writeups
 - Metadata: {"type": "web/pwn/crypto/...", "source": "picoCTF", "difficulty": 0-10}
 - Document: 解题步骤文本
-- 检索策略: HyDE（Sprint 3.3 接入），此处只提供基础语义检索能力
+- 检索策略: HyDE（接入），此处只提供基础语义检索能力
 
 设计：
 - 依赖注入 embedding_function 与 client，便于测试用确定性 mock

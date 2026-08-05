@@ -17,7 +17,7 @@ from typing import Any
 def _extract_balanced_json(text: str) -> str | None:
     """提取首个花括号配平完整的 JSON 对象 (跳过字符串内 {}/转义引号).
 
-    Sprint 36 复盘根因修复: LLM 在 JSON 后直接跟解释文本且文本含 {} 时
+    复盘根因修复: LLM 在 JSON 后直接跟解释文本且文本含 {} 时
     (如 `Action Input: {"file": "/tmp/x"} 文件内容包含 {"flag": "..."}`),
     旧 "首{到末}" 截取会把中间文本一并包进 JSON → json.loads 失败.
 
@@ -53,13 +53,13 @@ def _extract_balanced_json(text: str) -> str | None:
 
 
 def _robust_json_loads(text: str) -> Any:
-    """容错 JSON 解析 (Sprint 32.2 / 36).
+    """容错 JSON 解析 (/ 36).
 
     背景: LLM (deepseek-v4-flash) 输出复杂命令的 Action Input 时,
     常出现: JSON 后跟多余字符 ("Extra data"), 尾随逗号, markdown 装饰等.
     直接 json.loads 会失败, 导致 Agent 连续格式错误浪费步数 (PWN/RE 题复盘).
 
-    Sprint 36 增强: "首{到末}" → "配平花括号提取完整 JSON 对象"
+    增强: "首{到末}" → "配平花括号提取完整 JSON 对象"
     (修复 JSON 后跟含 {} 文本时把文本包进 JSON 的解析失败).
 
     修复策略 (逐级降级):
@@ -167,7 +167,7 @@ class Tool(ABC):
                     )
                 kwargs = parsed
             except json.JSONDecodeError:
-                # Sprint 36 复盘: 破损 JSON 恢复 — 配平提取已失败 (值内引号未转义等),
+                # 复盘: 破损 JSON 恢复 — 配平提取已失败 (值内引号未转义等),
                 # 尝试从原文本提取必填字段的 "key": "value" 对, 最大限度救回本步
                 # (threshold 复盘: aggressive 写脚本时反复因未转义 {}/引号失败烧掉 9.4M tokens).
                 recovered = self._recover_kwargs(action_input)
@@ -188,7 +188,7 @@ class Tool(ABC):
             )
 
     def _recover_kwargs(self, text: str) -> dict[str, Any] | None:
-        """Sprint 36: 破损 JSON 的字段级恢复.
+        """破损 JSON 的字段级恢复.
 
         配平提取后仍无法 json.loads (典型: 值内双引号未转义, 如
         `{"cmd": "echo 'x' && cat /tmp/{"a":1}"}`), 改为从原文本提取

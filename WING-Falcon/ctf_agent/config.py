@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     planner_model: str = Field(default="gpt-4o", alias="PLANNER_MODEL")
     executor_model: str = Field(default="deepseek-chat", alias="EXECUTOR_MODEL")
 
-    # ---- 模型路由 (Sprint 17) ----
+    # ---- 模型路由 ----
     # 优先 endpoint (免费但可能不稳定), 失败后回退官方
     zen_api_key: SecretStr = Field(default="", alias="ZEN_API_KEY")
     zen_base_url: str = Field(
@@ -49,8 +49,8 @@ class Settings(BaseSettings):
     # 重试次数 (zen 失败后重试 N 次才回退)
     llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
 
-    # ---- Pro 模型路由 (Sprint 19, Sprint 26 deprecated) ----
-    # ⚠️ Sprint 26 起 pro 路由默认关闭且不再推荐使用:
+    # ---- Pro 模型路由 (deprecated) ----
+    # ⚠️ pro 路由默认关闭且不再推荐使用:
     #   deepseek-v4-flash 正式版能力已足够强, 按难度调思考强度(thinking_mode)可覆盖 pro 的"难题增强"诉求
     #   pro 模型成本高 3-5x、速度慢 2x, 对当前瓶颈(工具/策略)无帮助
     # 功能保留(仅 .env 显式 ENABLE_PRO_FALLBACK=true 才生效), 后续不再维护
@@ -59,14 +59,14 @@ class Settings(BaseSettings):
         default="https://api.deepseek.com/v1", alias="PRO_BASE_URL"
     )
     pro_model: str = Field(default="deepseek-v4-pro", alias="PRO_MODEL")
-    # 是否启用 pro 模型回退 (默认关闭, 通过 .env 开启) — Sprint 26 deprecated
+    # 是否启用 pro 模型回退 (默认关闭, 通过 .env 开启) — deprecated
     enable_pro_fallback: bool = Field(default=False, alias="ENABLE_PRO_FALLBACK")
     # flash 阶段判断"不足以完成"的步数阈值比例 (达成比例时切换pro)
     pro_fallback_step_ratio: float = Field(default=0.7, alias="PRO_FALLBACK_STEP_RATIO")
     # pro 模型最大重试步数
     pro_max_steps: int = Field(default=40, alias="PRO_MAX_STEPS")
 
-    # ---- 思考模式 (Sprint 26, deepseek-v4-flash thinking_mode) ----
+    # ---- 思考模式 (deepseek-v4-flash thinking_mode) ----
     # 官方文档: https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
     # 启用后模型先输出思维链(reasoning_content)再输出最终回答(content), 提升准确性
     # reasoning_effort 支持 high/max (low/medium 会被映射为 high, xhigh 映射为 max)
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     kali_key_path: str = Field(default="", alias="KALI_KEY_PATH")
 
     # ---- 熔断阈值 ----
-    # Sprint 17: max_steps 50→80 硬性上限, 动态熔断由 AdaptiveBreaker 按难度调整
+    # max_steps 50→80 硬性上限, 动态熔断由 AdaptiveBreaker 按难度调整
     max_steps: int = Field(default=80, alias="MAX_STEPS")
     max_task_time: int = Field(default=1800, alias="MAX_TASK_TIME")
     max_cost_limit: float = Field(default=1.5, alias="MAX_COST_LIMIT")

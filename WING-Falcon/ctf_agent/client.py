@@ -1,4 +1,4 @@
-"""AgentClient SDK (Sprint 26): 统一的 CTF-Agent 调用接口.
+"""AgentClient SDK: 统一的 CTF-Agent 调用接口.
 
 封装子进程管理 + JSONL 协议解析 + 双向通信, 让任何调用方 (NSS Runner /
 测试中继 / 第三方应用) 都能用 3 行代码接入 CTF-Agent.
@@ -121,7 +121,7 @@ class AgentClient:
             )
 
         cmd = [
-            self.python, "-u",  # -u: 强制 unbuffered (Sprint 26 实时性)
+            self.python, "-u",  # -u: 强制 unbuffered (实时性)
             "-m", "ctf_agent.solve",
             "--task-file", str(actual_task_file),
         ]

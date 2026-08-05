@@ -1,6 +1,6 @@
 # WING-Falcon 猎隼 — 精英单兵
 
-> **定位**：精英单兵 — 单 agent 完整解题引擎基线（Sprint 32.10 快照，2026-08-02）
+> **定位**：精英单兵 — 单 agent 完整解题引擎基线（最新快照，2026-08-02）
 > 版本谱系：**WING-Falcon → WING-Goose（雁阵）→ WING-Corvus（渡鸦）**
 
 ## 核心能力
@@ -31,7 +31,7 @@ WING-Falcon/
 ├── pyproject.toml
 ├── .env.example          # 环境配置模板
 ├── README.md
-└── WING_FALCON_DESIGN.md # 2000+ 行完整设计+使用文档
+└── WING_FALCON_DESIGN.md # 1500+ 行完整设计+使用文档
 ```
 
 ## 快速开始

@@ -1,10 +1,10 @@
-"""Sprint 18/27: 动态熔断器 (强化 + 动态扩展).
+"""动态熔断器 (强化 + 动态扩展).
 
 设计:
-- Sprint 27: 拉高步数上限, 适配长操作链 (如 KeePass+RAR+嵌套隐写)
+- 拉高步数上限, 适配长操作链 (如 KeePass+RAR+嵌套隐写)
   - BASE_STEPS 50→60, HARD_MAX_STEPS 150→200
   - medium 1.2→1.5 (60→90步), hard 2.0→2.5 (60→150步)
-- Sprint 27: 动态扩展机制 — 达到上限后, 巡查指导器判断方向正确则自动 +20 步
+- 动态扩展机制 — 达到上限后, 巡查指导器判断方向正确则自动 +20 步
 - AdaptiveBreaker 根据 challenge_type + difficulty 动态决定实际 max_steps
 """
 from __future__ import annotations
@@ -12,13 +12,13 @@ from __future__ import annotations
 from ctf_agent.orchestrator.breaker import CircuitBreaker
 
 
-# 难度 → 步数倍率 (Sprint 27: 拉高, 适配长操作链)
-# Sprint 21.1: easy 0.8 → 1.0
-# Sprint 27: medium 1.2→1.5, hard 2.0→2.5 (实测 #2428 60步不够)
+# 难度 → 步数倍率 (拉高, 适配长操作链)
+# easy 0.8 → 1.0
+# medium 1.2→1.5, hard 2.0→2.5 (实测 60步不够)
 _DIFFICULTY_MULTIPLIER = {
     "easy": 1.0,
-    "medium": 1.5,   # Sprint 27: 1.2→1.5 (90步, 适配嵌套解密链)
-    "hard": 2.5,     # Sprint 27: 2.0→2.5 (150步, 适配复杂逆向/取证)
+    "medium": 1.5,   # 1.2→1.5 (90步, 适配嵌套解密链)
+    "hard": 2.5,     # 2.0→2.5 (150步, 适配复杂逆向/取证)
 }
 
 # 类型 → 步数倍率 (覆盖难度倍率)
@@ -28,15 +28,15 @@ _TYPE_MULTIPLIER = {
     "crypto": 0.8,   # 通常脚本即可
     "web": 1.0,      # 标准
     "forensics": 1.2, # 二进制解析需更多
-    "misc": 1.2,     # Sprint 27: 1.0→1.2 (misc 常有嵌套解密链, #2428 实测 60步不够)
+    "misc": 1.2,     # 1.0→1.2 (misc 常有嵌套解密链, 实测 60步不够)
     "osint": 1.0,
 }
 
-# Sprint 27: 硬性上限 200 (easy 60 / medium 90 / hard 150)
+# 硬性上限 200 (easy 60 / medium 90 / hard 150)
 HARD_MAX_STEPS = 200  # 硬性上限, 任何情况不可超越
-BASE_STEPS = 60       # Sprint 27: 50→60 (基准提高)
+BASE_STEPS = 60       # 50→60 (基准提高)
 
-# Sprint 27: 动态扩展配置
+# 动态扩展配置
 EXTEND_STEPS = 20     # 每次扩展步数
 MAX_EXTENSIONS = 2    # 最多扩展次数 (总计可加 40 步)
 
@@ -57,7 +57,7 @@ def compute_max_steps(
 class AdaptiveBreaker(CircuitBreaker):
     """动态熔断器: 按题目类型+难度调整 max_steps 和 max_seconds.
 
-    Sprint 27: 支持动态扩展 max_steps (达到上限后, 巡查指导器判断方向正确则 +20 步)
+    支持动态扩展 max_steps (达到上限后, 巡查指导器判断方向正确则 +20 步)
     """
 
     def __init__(
@@ -70,8 +70,8 @@ class AdaptiveBreaker(CircuitBreaker):
         **kwargs,
     ) -> None:
         dynamic_max = compute_max_steps(challenge_type, challenge_difficulty)
-        # Sprint 18: hard 题 max_seconds 默认 1800s 偏短, 提升到 2700s (45min)
-        # Sprint 32.4 修复 (#2501 Blast 复盘): 之前 medium 分支 `min(max(x,1200),1200)`
+        # hard 题 max_seconds 默认 1800s 偏短, 提升到 2700s (45min)
+        # 修复 (历史复盘): 之前 medium 分支 `min(max(x,1200),1200)`
         # 恒等于 1200s, 无视调用方 (NSS executor) 显式传入的合理时间 (如 1500s),
         # 导致方向正确、进展正常 (第47步刚发现关键线索) 时被时间熔断误杀.
         # 现改为: 尊重调用方传入值, 难度只做下限兜底 (防传值过小).
@@ -93,10 +93,10 @@ class AdaptiveBreaker(CircuitBreaker):
         self._challenge_type = challenge_type
         self._challenge_difficulty = challenge_difficulty
         self._dynamic_max_steps = dynamic_max
-        self._extensions_used = 0  # Sprint 27: 已使用的扩展次数
+        self._extensions_used = 0  # 已使用的扩展次数
 
     def extend_steps(self, additional: int = EXTEND_STEPS) -> bool:
-        """Sprint 27: 动态扩展 max_steps.
+        """动态扩展 max_steps.
 
         达到上限后, 巡查指导器判断方向正确时调用此方法.
         每次扩展 EXTEND_STEPS 步, 最多 MAX_EXTENSIONS 次.

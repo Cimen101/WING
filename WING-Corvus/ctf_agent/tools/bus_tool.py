@@ -135,7 +135,7 @@ class CheckFindingsTool(Tool):
         entries, new_cursor = _check(self.bus, cursor, task_id=task_id,
                                      kind=kind)
         # 强制回答检查: 扫描全部条目, 找出来自其他 agent 且本 agent 尚未回答的提问
-        # 防止兄弟 agent 因等待答复而卡死 (如 conservative dantes 死循环)
+        # 防止兄弟 agent 因等待答复而卡死 (如某解题器死循环)
         all_entries, _ = _check(self.bus, 0, task_id=task_id, kind=None)
         answered_ids = {e.reply_to for e in all_entries
                         if e.kind == "answer" and e.agent_id == self.agent_id}

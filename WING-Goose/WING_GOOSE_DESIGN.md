@@ -261,17 +261,17 @@ ReActEngine(
 `parse_llm_output` 面向真实 LLM 输出的各种不规范形态做了大量容错，这是 Falcon 时代积累的健壮性资产：
 
 - 字段大小写不敏感；Action Input 可被 ```json``` 包裹；
-- `**Action:**` 等 Markdown 加粗装饰剥离（Sprint 14 P4）；
+- `**Action:**` 等 Markdown 加粗装饰剥离；
 - Action 名只匹配 `[a-z_][a-z0-9_]*` 工具名格式，跳过 `**`；
 - `Action(?!\s*:?\s*Input\b)` 负向前瞻避免把 `Action Input:` 的 "Input" 误当工具名；
-- Thought 缺失时回退：取 `Action:`/`Final Answer:` 前的文本作为 thought（Sprint 20）；
-- Action Input 别名回退：`Input:/Args:/Arguments:/Parameters:/Params:/参数:`（Sprint 20）；
-- 漏写 `Action Input:` 前缀时，从文本中提取首个 JSON 对象作为输入（Sprint 20）；
-- 代码块 + 首尾 `*`/`_`/`` ` `` 装饰统一剥离（Sprint 15 P6）。
+- Thought 缺失时回退：取 `Action:`/`Final Answer:` 前的文本作为 thought；
+- Action Input 别名回退：`Input:/Args:/Arguments:/Parameters:/Params:/参数:`；
+- 漏写 `Action Input:` 前缀时，从文本中提取首个 JSON 对象作为输入；
+- 代码块 + 首尾 `*`/`_`/`` ` `` 装饰统一剥离。
 
 #### 3.1.3 步数软截断（while True + 进展感知）
 
-Sprint 32.4b 修复了"协调器 extend_steps 从未生效"的 bug：旧实现 `for range(max_steps)` 在进入循环时一次性求值，协调器动态扩展的步数永远不会生效。新实现改为 `while True` 循环：
+修复了"协调器 extend_steps 从未生效"的 bug：旧实现 `for range(max_steps)` 在进入循环时一次性求值，协调器动态扩展的步数永远不会生效。新实现改为 `while True` 循环：
 
 - 每步动态判断 `self.max_steps`（extend_steps 立即生效）；
 - 超过 `max_steps` 后**不立即硬停**：若熔断器判定"持续有实质进展"（`has_recent_progress`，最近步有非空 observation）则继续；
@@ -315,7 +315,7 @@ if self._bus is not None and step_no % 5 == 0:
 
 **c) 强制回答兄弟提问**
 
-每 5 步扫描总线中来自兄弟 agent 且本 agent 尚未回答的 `question` 条目，未回答的以 `[MUST] 强制回答` 注入：要求用 `share_finding(kind=answer, reply_to=提问id)` 回复，不清楚时也必须回答"不知道"，防止兄弟 agent 因等待答复而卡死（复盘案例：conservative dantes 死循环）。
+每 5 步扫描总线中来自兄弟 agent 且本 agent 尚未回答的 `question` 条目，未回答的以 `[MUST] 强制回答` 注入：要求用 `share_finding(kind=answer, reply_to=提问id)` 回复，不清楚时也必须回答"不知道"，防止兄弟 agent 因等待答复而卡死（复盘案例：某解题器死循环）。
 
 **d) 巡查事实发布（发布端）**
 
@@ -328,7 +328,7 @@ check: 每 5 步拉取兄弟的 FACT/LIKELY 发现 → 注入 prompt
 
 统计字段 `_bus_injected_count` / `_bus_posted_count` 供采纳率/双向性分析。
 
-#### 3.1.7 LLM 调用容错（Sprint 32.8）
+#### 3.1.7 LLM 调用容错
 
 每步 LLM 调用带三级容错，保证"中途 API 故障不能整题 0 步失败"：
 
@@ -349,7 +349,7 @@ check: 每 5 步拉取兄弟的 FACT/LIKELY 发现 → 注入 prompt
 | aggressive（激进） | 快速试错、多路径并行、已知攻击工具优先 | 优先尝试 ghidra/radare2/angr/内置工具；容忍失败快速换路；有候选答案立即验证 |
 | innovative（创新） | 非常规思路 + 创造性工具箱 | 质疑显而易见的结论；卡住时逐条对照"创造性工具箱"5 法（见下） |
 
-创新风格的"创造性工具箱"（针对 T2-REV 复盘发现的"创新创造性不足"专门设计）5 条发散模板：
+创新风格的"创造性工具箱"（针对 逆向题复盘发现的"创新创造性不足"专门设计）5 条发散模板：
 
 1. **目标反转**：解密/验证卡住时反问"也许这个文件不是密文而是 key？不是输出而是输入？"
 2. **空间重估**：爆破太慢时重新评估实际 key/搜索空间——"名义位宽 vs 实际可达空间"往往远小；
@@ -422,7 +422,7 @@ solve.py 构造引擎时读取 task JSON 的 `style` 字段：
 - 非创新风格：仅在干预时随 guidance 注入 `strategic_direction`（战略深化，在主 LLM 当前推理基础上深入细化，不另起炉灶）；
 - 沉默原则：方向未偏移时不注入任何内容（含战略方向）。
 
-#### 3.3.4 异步事件驱动（Sprint 33）
+#### 3.3.4 异步事件驱动
 
 巡查分析不再阻塞 agent 主循环：
 
@@ -436,11 +436,11 @@ solve.py 构造引擎时读取 task JSON 的 `style` 字段：
 #### 3.3.5 禁忌列表与精确签名禁忌
 
 - `_forbidden_actions`：LLM 分析时生成的描述性禁忌（如"hashcat 爆破 cloud.zip 密码"），`intercept_forbidden` 在工具执行前以关键词匹配拦截（仅取长度 >3 的词，降低误伤）；
-- `_forbidden_signatures`：Sprint 35 精确签名禁忌——死循环检测时自动把重复的精确 action 签名（action + action_input 前 100 字符归一化）加入集合，拦截完全相同的操作，避免关键词误伤不同命令；
+- `_forbidden_signatures`：精确签名禁忌——死循环检测时自动把重复的精确 action 签名（action + action_input 前 100 字符归一化）加入集合，拦截完全相同的操作，避免关键词误伤不同命令；
 - DISPROVED 推论自动清理对应禁忌项；`remove_forbidden` 支持移除被证伪的误判禁忌；
 - 禁忌依据必须是 FACT/DISPROVED，不得基于 POSSIBLE。
 
-#### 3.3.6 全局已尝试方向追踪（Sprint 35）
+#### 3.3.6 全局已尝试方向追踪
 
 `_tried_directions` 跨 lookback 窗口记录每个 action 签名的尝试次数、是否有进展、最后步号：
 
@@ -449,7 +449,7 @@ solve.py 构造引擎时读取 task JSON 的 `style` 字段：
 - 死循环判定：recent 最近 3 步中的签名在整个轨迹中重复 ≥max_repeats×2（默认 6 次）且无进展 → 全局死循环，强制切换方向；
 - 检测到死循环时 `_auto_add_forbidden` 自动把重复操作加入精确签名禁忌（所有风格适用，创新风格也不能重复已确认无效的方向）。
 
-#### 3.3.7 推论分级 belief_state（Sprint 32.6）
+#### 3.3.7 推论分级 belief_state
 
 巡查 LLM 的每次分析都基于**推论分级框架**，跨巡查持久化：
 
@@ -462,13 +462,13 @@ solve.py 构造引擎时读取 task JSON 的 `style` 字段：
 
 每次巡查流程：回顾上次推论 → 用最新轨迹事实更新（升级/降级/证否/新增）→ 反思 → 决策。`reflection` 字段（必填，≥30 字）供日志与调试。
 
-#### 3.3.8 MUST 未执行检测（Sprint 32.4 / 32.4c）
+#### 3.3.8 MUST 未执行检测
 
-复盘发现（#2501 Blast）：协调器 step10 下达 MUST（"停止单字符 MD5 爆破"）后 agent 忽略，继续穷举 20 步。现实现：
+复盘发现（历史复盘）：协调器 step10 下达 MUST（"停止单字符 MD5 爆破"）后 agent 忽略，继续穷举 20 步。现实现：
 
 - 上次指导是 MUST 且主导工具未变、已过 ≥1 个巡查间隔、且无实质进展 → 升级为 MUST 阻断干预；
-- 连续 ≥2 个空 action（格式崩溃）也视为 MUST 未执行（Sprint 35.1 修复：空 action 不能算"工具已改变"）；
-- 自我纠错（32.4c）：主导工具未变**但持续有实质进展**（≥2 种不同 observation）不判未执行——agent 可能用自己的方式推进（修复 #2516 误判案例）；
+- 连续 ≥2 个空 action（格式崩溃）也视为 MUST 未执行（修复：空 action 不能算"工具已改变"）；
+- 自我纠错（32.4c）：主导工具未变**但持续有实质进展**（≥2 种不同 observation）不判未执行——agent 可能用自己的方式推进（修复 误判案例）；
 - `revert_guidance=true` 时撤销上次指导并停止 MUST 持久重复注入。
 
 #### 3.3.9 知识库辅助
@@ -570,7 +570,7 @@ def _on_submission(self, style, flag):
 - 被兄弟 kill 的路：`raw_result` 为空且非 winner → `killed_by_sibling=True`（用于统计 killed_count）；
 - `stop()` 方法供外部（如 NSS Runner stop 信号）kill 全部存活进程。
 
-#### 3.4.6 verify_flag 设计约定（Crypto_Reverse 复盘）
+#### 3.4.6 verify_flag 设计约定（复杂逆向题 复盘）
 
 swarm.py 文档字符串明确记录的设计约定：
 
@@ -679,7 +679,7 @@ ReActEngine 已在 `engine.started` / `engine.finished` / `step.completed` 三�
 
 #### 3.6.1 定位
 
-`TrajectoryReviewer` 是 **T6 验证流程封装**：从解题轨迹中提取可复用经验。与 `skill_learner._learn()`（模板生成、不调 LLM、每题都跑）互补——`_review()` 是 LLM 深度复盘、高质量、仅步数 ≥8 且轨迹文本 ≥200 字符时运行。
+`TrajectoryReviewer` 是 **验证流程封装**：从解题轨迹中提取可复用经验。与 `skill_learner._learn`（模板生成、不调 LLM、每题都跑）互补——`_review` 是 LLM 深度复盘、高质量、仅步数 ≥8 且轨迹文本 ≥200 字符时运行。
 
 三个特点：
 
@@ -748,7 +748,7 @@ _CLAIM_ENTITIES = re.compile(
 每步循环内按序可能注入：
 
 1. system prompt 刷新（mid-term facts + RAG，若有）——`_inject_context`；
-2. 巡查指导（`_coordinator_guidance`，含 [MUST] 持久注入，剩 `_must_repeat_left` 次强调；来源步数标注）——Sprint 33 异步召回后注入；
+2. 巡查指导（`_coordinator_guidance`，含 [MUST] 持久注入，剩 `_must_repeat_left` 次强调；来源步数标注）——异步召回后注入；
 3. 兄弟发现块（每 5 步，bus check_sanitized）；
 4. 协作义务提示（每 5 步）；
 5. 强制回答指令（每 5 步，若有 pending 提问）；
@@ -779,9 +779,9 @@ _CLAIM_ENTITIES = re.compile(
 |------|------|------|
 | L1 内置 | base64_encode/decode、hex_encode/decode、url_encode/decode、caesar_cipher、rot13、hash_compute/identify、file_type、strings、hex_dump | 无（纯 Python） |
 | HTTP | http_request | 无 |
-| 编码辅助 | encoding_helper_tools（Sprint 23） | 无 |
-| 本地密码学 | crypto_rsa、crypto_classic（Sprint 16） | 无 |
-| Exploit 模板 | exploit_template（Sprint 19） | 无 |
+| 编码辅助 | encoding_helper_tools | 无 |
+| 本地密码学 | crypto_rsa、crypto_classic | 无 |
+| Exploit 模板 | exploit_template | 无 |
 | 总线协作 | share_finding / check_findings（S12） | 传 message_bus 时注册 |
 | 共享文件 | list_shared_files / read_shared_file / write_shared_file（S13） | 传 shared_fs_dir 时注册 |
 | 执行层 | ssh_exec / ssh_python / ssh_upload（主名，docker 或 ssh 后端） | docker_client 或 ssh_client |
@@ -887,7 +887,7 @@ client.upload_file("local.bin", "/challenge/local.bin")
 
 - `"flash"`（默认）：zen → go → 官方 flash fallback（→ pro，可选）；
 - `"pro"`：flash 失败后跳 pro；
-- `"pro_only"`：直接 pro（Sprint 26 deprecated）。
+- `"pro_only"`：直接 pro（deprecated）。
 
 **WING-Goose 关键变更——`LLM_PROVIDER` 模式**（config.py，默认 `"go"`）：
 
@@ -897,8 +897,8 @@ client.upload_file("local.bin", "/challenge/local.bin")
 #### 3.9.2 客户端级超时与直连
 
 - 客户端全部使用 `httpx.Timeout` 客户端级超时：zen 45s / go 90s / fallback 30s / pro 120s；
-- **WING-Goose：全部 client 强制 `http_client=httpx.Client(proxy=None, trust_env=False)` 直连（禁系统代理）**——复盘案例 #2664：走 127.0.0.1:7890 代理导致 go 请求 45s+ 超时，每步 LLM 耗时 90s+，easy 题 12 分钟才解出；国内部署模型必须直连国内 IP，响应快且稳定；
-- go 超时 45→90s（thinking 长推理常超 45s，45s 硬超时会触发 3 轮重试链 45×3+2×2=139s 白扔，放宽后长思考一次成功，见 #2669 复盘）。
+- **WING-Goose：全部 client 强制 `http_client=httpx.Client(proxy=None, trust_env=False)` 直连（禁系统代理）**——复盘案例：走 127.0.0.1 代理导致 go 请求 45s+ 超时，每步 LLM 耗时 90s+，easy 题 12 分钟才解出；国内部署模型必须直连国内 IP，响应快且稳定；
+- go 超时 45→90s（thinking 长推理常超 45s，45s 硬超时会触发 3 轮重试链 45×3+2×2=139s 白扔，放宽后长思考一次成功，见 历史复盘）。
 
 #### 3.9.3 wall-clock 总超时
 
@@ -910,7 +910,7 @@ httpx read timeout 防不了慢速流（服务器持续缓慢发 chunk，每次�
 
 #### 3.9.4 动态 provider 健康状态
 
-冒烟测试标记不是"终身制"（Sprint 32.8）：
+冒烟测试标记不是"终身制"：
 
 - 连续失败 ≥2 次（`_PROVIDER_FAIL_THRESHOLD`）→ 标记 down + 进入 120s 跳过期（`_PROVIDER_SKIP_AFTER_FAIL`）；
 - 调用成功 → 立即恢复健康（清除故障状态）；
@@ -949,7 +949,7 @@ httpx read timeout 防不了慢速流（服务器持续缓慢发 chunk，每次�
 - 成本维度：`record_llm_call(tokens, model)` 按模型定价表估算（假设 75% input / 25% output）；
 - 无效步数检测：action 相同 + observation 高相似（相似度阈值 0.85，连续 ≥5 步）；
 - 单步耗时上限 120s；
-- **Sprint 32.4 进展感知时间熔断**（#2501 复盘修复）：到 max_seconds 不"一刀切"终止——有实质进展（最近步非空 observation）则进入 progress_grace 宽限，时间熔断由 hard_max 3x 保险兜底。
+- **进展感知时间熔断**（历史复盘修复）：到 max_seconds 不"一刀切"终止——有实质进展（最近步非空 observation）则进入 progress_grace 宽限，时间熔断由 hard_max 3x 保险兜底。
 
 #### 3.10.2 自适应熔断（adaptive.py）
 
@@ -1026,7 +1026,7 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
 以"aggressive 发现关键线索 → innovative 复用并提问 → conservative 回答"为例：
 
 ```
-时间线 (总线文件 data/bus/nss_2314.jsonl):
+时间线 (总线文件 data/bus/challenge_demo.jsonl):
 ────────────────────────────────────────────────────────────────────────
 [agg]  step 8   post_finding(kind=finding, level=FACT)
                 content="目标表前 2 项与 md5(单字符) 不匹配, 单字符爆破已证伪"
@@ -1054,7 +1054,7 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
 
 - 问题：verify_flag 返回 False 会带偏 agent 并阻止兄弟 kill 触发（资源空转）。
 - 决策：verify_flag 只做"平台/确证性校验"，**不是**防幻觉（防幻觉由 react.py 兜底：无工具调用直接 Final 被拒绝）。只有存在确凿反证才返回 False；无法判定时倾向 True。
-- 来源：Crypto_Reverse 复盘。
+- 来源：复杂逆向题复盘。
 
 **ADR-2：总线消息必须消毒（file_bus.py）**
 
@@ -1064,9 +1064,9 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
 
 **ADR-3：go-only 模式（llm/routed.py）**
 
-- 问题：国内部署走代理导致 go 请求 45s+ 超时（#2664）；zen 免费层不稳定干扰调试。
+- 问题：国内部署走代理导致 go 请求 45s+ 超时；zen 免费层不稳定干扰调试。
 - 决策：`LLM_PROVIDER=go` 只走 go 套餐、禁系统代理直连、go 失败直接抛错（不降级）；`DISABLE_ZEN=true` 默认关免费层。
-- 来源：#2664 / #2669 复盘 + 9 组受控实验。
+- 来源：历史复盘 + 9 组受控实验。
 
 **ADR-4：go 端点思考归零（llm/routed.py）**
 
@@ -1076,27 +1076,27 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
 
 **ADR-5：MUST 持久注入（react.py + coordinator.py）**
 
-- 问题：#2501 复盘——协调器 step10 下达 MUST（"停止单字符 MD5 爆破"），agent 忽略后继续穷举 20 步，MUST 只注入 1 次无强制力。
+- 问题：历史复盘——协调器 step10 下达 MUST（"停止单字符 MD5 爆破"），agent 忽略后继续穷举 20 步，MUST 只注入 1 次无强制力。
 - 决策：MUST 指导连续重复注入 3 次（本步 + 后续 2 步）；与禁忌拦截配合闭环（`intercept_forbidden` 在巡查间隔之外也拦截确认无效的操作）；MUST 未执行检测（主导工具未变 + 无实质进展 → 升级阻断）。
-- 来源：#2501 Blast 复盘。
+- 来源：历史复盘。
 
 **ADR-6：进展判定必须"不同 observation"（coordinator.py）**
 
-- 问题：#2520 dantes innovative 死循环——旧逻辑只检查 observation 非空，agent 重复同一命令产生相同 obs 也被判为"有进展"，MUST 未执行检测失效，死循环 60+ 步。
+- 问题：某解题器死循环——旧逻辑只检查 observation 非空，agent 重复同一命令产生相同 obs 也被判为"有进展"，MUST 未执行检测失效，死循环 60+ 步。
 - 决策：`_has_progress` / `_has_progress_after_guidance` 要求 ≥2 种**不同**的非空 observation；单一重复 observation = 死循环。
-- 来源：#2520 / #2516 复盘。
+- 来源：历史复盘。
 
 **ADR-7：完全重复但持续有新发现 ≠ 死循环（coordinator.py）**
 
-- 问题：#2516——agent 反复用同一 capstone 模板验证不同函数/假设（系统性验证性推进），被机械判定为死循环。
+- 问题：agent 反复用同一 capstone 模板验证不同函数/假设（系统性验证性推进），被机械判定为死循环。
 - 决策：完全重复但 `_has_progress` 为真时降级为软线索，交 L2 LLM 判断是否思路固化。
-- 来源：#2516 复盘。
+- 来源：历史复盘。
 
 **ADR-8：异步巡查必须回主线程应用（react.py + coordinator.py）**
 
 - 问题：后台线程直接改 `_coordinator_guidance` / `_must_repeat_left` 等状态会与主线程竞态。
 - 决策：后台线程只做 analyze（结果存 `_pending_guidance`），副作用（指导注入/禁忌提醒/扩展步数/总线发布/日志）全部在 `_apply_coordinator_guidance` 于主线程执行；队列上限 1 防叠加；注入时声明来源步数防过时误导。
-- 来源：Sprint 33 异步事件驱动设计。
+- 来源：异步事件驱动设计。
 
 **ADR-9：容器工具主名统一为 ssh_*（docker_tool.py）**
 
@@ -1106,9 +1106,9 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
 
 **ADR-10：步数软截断 + 进展感知时间熔断（react.py + breaker.py）**
 
-- 问题：`for range(max_steps)` 一次性求值导致 extend_steps 永不生效；时间熔断"一刀切"误杀方向正确、刚发现关键线索的 agent（#2501 第 47 步案例）。
+- 问题：`for range(max_steps)` 一次性求值导致 extend_steps 永不生效；时间熔断"一刀切"误杀方向正确、刚发现关键线索的 agent（第 47 步案例）。
 - 决策：while True + 每步动态判断 max_steps（extend 立即生效），超限且有进展继续（时间熔断兜底）；时间熔断尊重调用方传入值、只做下限兜底、有实质进展进入 progress_grace。
-- 来源：Sprint 32.4b / #2501 复盘。
+- 来源：/ 历史复盘。
 
 **ADR-11：docker 快路径 vs B+ 后台并存（docker_tool.py）**
 
@@ -1118,9 +1118,9 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
 
 **ADR-12：协作义务注入（react.py + coordinator.py）**
 
-- 问题：Crypto_Reverse 复盘——本次运行 40 条 bus 全为巡查发布，agent 从未主动分享/提问，根因是 prompt 无协作引导，而非工具缺失。
+- 问题：复杂逆向题 复盘——本次运行 40 条 bus 全为巡查发布，agent 从未主动分享/提问，根因是 prompt 无协作引导，而非工具缺失。
 - 决策：总线启用时注入 `_COOP_GUIDANCE`（告知存在并行兄弟 + 主动使用两个工具）；每 5 步注入协作义务提示；巡查干预时也提醒发布关键线索。
-- 来源：Sprint 36 协作升级点 1（雁阵 v2）。
+- 来源：协作升级点 1（雁阵 v2）。
 
 **ADR-13：swarm 默认全难度并行（config.py）**
 
@@ -1142,7 +1142,7 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
 
 ```json
 {
-  "challenge_id": "nss_2314",
+  "challenge_id": "challenge_demo",
   "title": "题目名",
   "desc": "任务描述 (题面+附件路径+靶机URL+规则)",
   "type": "web",
@@ -1153,7 +1153,7 @@ BASE_STEPS = 60; HARD_MAX_STEPS = 200
   "force_max_thinking": false,
   "max_submissions": 1,
   "style": "conservative",
-  "bus_challenge_id": "nss_2314",
+  "bus_challenge_id": "challenge_demo",
   "bus_dir": "/path/to/data/bus",
   "annex_dir": "/path/to/annex",
   "reset_container": false
@@ -1184,14 +1184,14 @@ stdout 每行一个 JSON 对象：
 | coordinator | 巡查日志（step_no / should_intervene / priority / guidance / forbidden_actions / belief_state 等） |
 | result | `success / flag / final_answer / fail_reason / steps / elapsed / tokens / model` |
 
-stdin 输入（调用器 → agent）：`{"correct":bool,"feedback":str}`（submission 响应）/ `{"control":"stop"}`（停止信号）。stdin 由**统一分发器**单线程读取后按消息类型分发（Sprint 30 修复 stop-listener 与 submission-handler 竞争 stdin 的问题，同时解决 Windows selectors 不能注册 stdin 的 WinError 10038）。
+stdin 输入（调用器 → agent）：`{"correct":bool,"feedback":str}`（submission 响应）/ `{"control":"stop"}`（停止信号）。stdin 由**统一分发器**单线程读取后按消息类型分发（修复 stop-listener 与 submission-handler 竞争 stdin 的问题，同时解决 Windows selectors 不能注册 stdin 的 WinError 10038）。
 
 ### 4.3 总线文件格式
 
 FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 
 ```json
-{"seq": 7, "ts": 1754300000.0, "agent": "aggressive", "task_id": "nss_2314",
+{"seq": 7, "ts": 1754300000.0, "agent": "aggressive", "task_id": "challenge_demo",
  "content": "RSA e=65537 n=2048bit 且 p/q 接近, 适合费马分解", "kind": "finding",
  "reply_to": 0, "level": "FACT", "topic": "finding"}
 ```
@@ -1225,7 +1225,7 @@ FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 | openai_base_url | OPENAI_BASE_URL | api.openai.com/v1 | 基础端点 |
 | planner_model / executor_model | PLANNER_MODEL / EXECUTOR_MODEL | gpt-4o / deepseek-chat | 规划/执行模型 |
 
-**模型路由（Sprint 17 / 33 + WING-Goose）**
+**模型路由（ WING-Goose）**
 
 | 字段 | 别名 | 默认 | 说明 |
 |------|------|------|------|
@@ -1235,9 +1235,9 @@ FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 | go_api_key/base_url/model | GO_* | opencode.ai/zen/go/v1 / deepseek-v4-flash | 付费层（无峰谷） |
 | fallback_api_key/base_url/model | FALLBACK_* | api.deepseek.com/v1 / deepseek-v4-flash | 官方兜底 |
 | llm_max_retries | LLM_MAX_RETRIES | 2 | 每 provider 重试次数 |
-| pro_* | PRO_* | — | Sprint 26 deprecated，仅 ENABLE_PRO_FALLBACK=true 生效 |
+| pro_* | PRO_* | — | deprecated，仅 ENABLE_PRO_FALLBACK=true 生效 |
 
-**思考模式（Sprint 26）**
+**思考模式**
 
 | 字段 | 默认 | 说明 |
 |------|------|------|
@@ -1275,7 +1275,7 @@ FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 |------|------|------|
 | SWARM_ENABLED | true | 默认开启多解题器：所有难度（含 easy）都走 3 风格并行；false → 回退 T3 结论（仅 medium/hard 并行，easy 单路） |
 
-**巡查指导器（Sprint 33 异步事件驱动）**
+**巡查指导器（异步事件驱动）**
 
 | 字段 | 默认 | 说明 |
 |------|------|------|
@@ -1332,7 +1332,7 @@ FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 ### 5.6 新增能力五：三风格解题（agent/styles.py）
 
 - **能力**：conservative（侦察先行/小步验证）/ aggressive（快速试错/多路径并行）/ innovative（非常规思路 + 创造性工具箱 5 模板）。
-- **价值**：风格差异是 swarm 并行的前提；创新风格专门针对 T2-REV 复盘发现的"创造性不足"增强。
+- **价值**：风格差异是 swarm 并行的前提；创新风格专门针对 逆向题复盘发现的"创造性不足"增强。
 - **细节**：风格词表与巡查风格段落同源（避免 agent 与巡查理解不一致）；solve.py 按 task.style 注入 STYLE_GUIDANCE + _COOP_GUIDANCE 协作引导。
 
 ### 5.7 新增能力六：Docker 执行链（tools/docker_tool.py）
@@ -1375,7 +1375,7 @@ FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 - 推论分级 belief_state（FACT/LIKELY/POSSIBLE/DISPROVED 跨巡查持久化，DISPROVED 自动清理禁忌）；
 - MUST 未执行检测（主导工具未变 + 无实质进展 → 阻断；空 action 格式崩溃也计入）；
 - 自我纠错 revert_guidance / remove_forbidden（上次判断被轨迹证伪即撤销）；
-- 进展判定精确化：≥2 种不同 observation 才算实质进展（修复 #2520/#2516 误判案例）；
+- 进展判定精确化：≥2 种不同 observation 才算实质进展（修复误判案例）；
 - 巡查间隔钳制 5~10 步。
 
 ### 5.11 增强三：配置系统新字段（config.py）
@@ -1412,7 +1412,7 @@ FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 13. **smoke_test 冒烟 + 动态健康叠加**：领题前快速探测 + 中途故障实时降级 + 恢复后自动重试，避免"冒烟通过 → 中途挂起 → 每次死等 30s×3"卡死。
 14. **go-only 模式思考归零**：reasoning_effort="none"（go 端点 Agent 类请求强制无界思考链的 9 组受控实验结论），推理由 ReAct Thought 承担，每步 10-20s。
 15. **wall-clock 总超时**：daemon 线程 + join(timeout) 覆盖 slow-drip 半死连接（httpx read timeout 防不了）。
-16. **协作义务注入**（Sprint 36）：巡查干预与每 5 步注入都提醒 agent 发布关键线索到总线——"战术层专注解题，关键事实必须回流共享池"。
+16. **协作义务注入**：巡查干预与每 5 步注入都提醒 agent 发布关键线索到总线——"战术层专注解题，关键事实必须回流共享池"。
 17. **进度判定阈值**：`_has_progress` / `_has_progress_after_guidance` 要求 ≥2 种**不同** observation（单一重复 observation 不算进展）——修复"重复命令产生相同 obs 被判为有进展"的死循环漏检。
 18. **step 时间戳**：ReActStep.timestamp 用 time.monotonic，供时间线计算。
 19. **多级 JSON 解析**：复盘与巡查 LLM 输出都做多级 fallback 解析，容错不崩溃。
@@ -1636,7 +1636,7 @@ python -c "from ctf_agent.swarm import SwarmCoordinator; ..."
 | OPENAI_BASE_URL | 基础端点（默认官方） |
 | PLANNER_MODEL / EXECUTOR_MODEL | 规划/执行模型名 |
 
-**模型路由（Sprint 33）**
+**模型路由**
 
 | 键 | 说明 |
 |----|------|
@@ -1647,7 +1647,7 @@ python -c "from ctf_agent.swarm import SwarmCoordinator; ..."
 | FALLBACK_API_KEY / FALLBACK_BASE_URL / FALLBACK_MODEL | 官方 deepseek flash 兜底 |
 | LLM_MAX_RETRIES | 每 provider 重试次数（默认 2） |
 
-**思考模式（Sprint 26）**
+**思考模式**
 
 | 键 | 说明 |
 |----|------|
@@ -1727,13 +1727,13 @@ sw = SwarmCoordinator(
     verify_flag=verify_flag,                # 可选；None=接受首个提交
 )
 task = {
-    "challenge_id": "nss_2314",
+    "challenge_id": "challenge_demo",
     "title": "babyrsa",
     "desc": "题目描述...",
     "type": "crypto",
     "difficulty": "easy",                  # easy→单路; medium/hard→3 路
     "max_seconds": 1500.0,
-    "bus_challenge_id": "nss_2314",        # 总线统一键（同题共享）
+    "bus_challenge_id": "challenge_demo", # 总线统一键（同题共享）
     "bus_dir": "./data/bus",               # 跨进程总线目录
 }
 result = sw.run(task, max_seconds=600.0)   # styles=None 按难度默认
@@ -1782,7 +1782,7 @@ DOCKER_CPU_PROFILE=heavy
 **单 agent JSONL 示例**：
 
 ```json
-{"type":"start","protocol_version":"1.1","challenge_id":"nss_2314","title":"babyrsa","challenge_type":"crypto","difficulty":"easy","max_steps":60,"max_seconds":1500,"max_submissions":1,"model":"deepseek-v4-flash"}
+{"type":"start","protocol_version":"1.1","challenge_id":"challenge_demo","title":"babyrsa","challenge_type":"crypto","difficulty":"easy","max_steps":60,"max_seconds":1500,"max_submissions":1,"model":"deepseek-v4-flash"}
 {"type":"step","step_no":1,"thought":"先查看附件文件类型...","action":"ssh_exec","action_input":"{\"command\": \"file /challenge/workspace/task.py\"}","observation":"$ file ...","is_error":false,"is_final":false,"final_answer":"","error_msg":"","timestamp":1754300001.2}
 {"type":"heartbeat","elapsed":15.3,"step":3,"phase":"ssh_exec"}
 {"type":"coordinator","step_no":10,"should_intervene":true,"priority":"SHOULD","reason":"基于 B1(FACT)...","guidance":"停止爆破...","forbidden_actions":[],"revert_guidance":false,"reflection":"反思...","belief_state":[{"id":"B1","statement":"...","level":"FACT"}]}
@@ -1804,7 +1804,7 @@ DOCKER_CPU_PROFILE=heavy
 | 现象 | 可能原因 | 处理 |
 |------|---------|------|
 | `python main.py run` 报 "OPENAI_API_KEY 未配置" | .env 缺失/键名错误 | 从 .env.example 复制并填写 `OPENAI_API_KEY` |
-| LLM 每步调用超时/卡 90s+ | 系统代理劫持（#2664） | 确认 `LLM_PROVIDER=go`；代码已强制 proxy=None 直连；检查网络到 opencode.ai 是否直连可达 |
+| LLM 每步调用超时/卡 90s+ | 系统代理劫持 | 确认 `LLM_PROVIDER=go`；代码已强制 proxy=None 直连；检查网络到 opencode.ai 是否直连可达 |
 | 容器无法启动（镜像缺失/daemon 异常） | 镜像未构建 / Docker Desktop 未运行 | `docker info` 检查 daemon；`docker build -f scripts/docker_test/Dockerfile.wing-goose -t wing-goose:v2 .`；或 `DOCKER_BUILD_ON_MISSING=true` |
 | `DOCKER_BACKEND=sdk` 报 docker-py 未安装 | 未装 extra 依赖 | `pip install -e ".[docker]"`（代码会自动降级 cli 并 warnings 提示） |
 | 附件在容器内找不到 | 容器是旧版本创建（无挂载） | 删除容器让其重建（S14 已自动校验缺挂载重建）；或设置 `reset_container=true` |

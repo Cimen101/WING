@@ -1,6 +1,6 @@
 # WING-Corvus 渡鸦 — 协作小队
 
-> **定位**：协作小队（Coordinated Squad）— 三层协作架构 + 多阶段协调（当前最新版，Sprint 36.2）
+> **定位**：协作小队（Coordinated Squad）— 三层协作架构 + 多阶段协调（当前最新版）
 > 版本谱系：WING-Falcon（猎隼）→ WING-Goose（雁阵）→ **WING-Corvus（渡鸦）**
 
 ## 核心能力
@@ -37,7 +37,7 @@ WING-Corvus/
 ├── data/                 # 白板数据库（空库，下载即用）
 ├── main.py / pyproject.toml / .env.example
 ├── README.md
-└── WING_CORVUS_DESIGN.md # 2000+ 行完整设计+使用文档
+└── WING_CORVUS_DESIGN.md # 1500+ 行完整设计+使用文档
 ```
 
 ## 快速开始

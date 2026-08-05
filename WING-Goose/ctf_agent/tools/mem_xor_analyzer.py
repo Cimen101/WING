@@ -1,4 +1,4 @@
-"""Sprint 10: 内存 dump 专用分析器 (Memory XOR Analyzer).
+"""内存 dump 专用分析器 (Memory XOR Analyzer).
 
 背景:
   v5 测试中 RAM_Drift 从 v4 6 步成功退化为 v5 24 步失败。
@@ -301,8 +301,8 @@ class MemXorAnalyzer:
     用法:
         analyzer = MemXorAnalyzer(ssh_client)
         result = analyzer.analyze(
-            dump_path="/tmp/ctf_real3/RAM_Drift/ram_dump.txt",
-            process_map_path="/tmp/ctf_real3/RAM_Drift/process_map.txt",
+            dump_path="/tmp/ctf_workspace/ram_dump.txt",
+            process_map_path="/tmp/ctf_workspace/process_map.txt",
         )
         print(result.summary())
     """

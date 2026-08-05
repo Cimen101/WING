@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""L2 DES cryptanalysis 工具 (Sprint 14 P2 新增).
+"""L2 DES cryptanalysis 工具 (新增).
 
 为 Narrow_DES 类自定义 DES 变体提供密钥恢复能力.
 本题 DES 变体特征:
@@ -44,7 +44,7 @@ def _check_z3(ssh: SSHClient) -> bool:
     """检测 z3-solver 是否在 Kali 上可用.
 
     z3 可能装在 3 个位置:
-    - /opt/ctf_venv (Python 3.11, Sprint 9 装的)
+    - /opt/ctf_venv (Python 3.11, 装的)
     - /usr/local/lib/python3.13/dist-packages/z3 (Kali 系统 Python 3.13)
     - /usr/lib/python3/dist-packages/z3 (apt 装的)
     """
@@ -220,7 +220,7 @@ def _brute_force_key(pairs: list[tuple[int, int]], verbose: bool = False) -> lis
 # ============ DesCryptanalysisTool ============
 
 class DesCryptanalysisTool(Tool):
-    """Narrow_DES 类自定义 DES 密钥恢复工具 (Sprint 14 P2).
+    """Narrow_DES 类自定义 DES 密钥恢复工具.
 
     用途: 给定已知明文-密文对, 恢复 64-bit DES 变体密钥.
 
@@ -238,7 +238,7 @@ class DesCryptanalysisTool(Tool):
 
     name = "des_cryptanalysis"
     description = (
-        "Narrow_DES 类自定义 DES 变体密钥恢复 (Sprint 14 P2+P6).\n"
+        "Narrow_DES 类自定义 DES 变体密钥恢复 （P6).\n"
         "用法: des_cryptanalysis(pairs_json='[[\"000000000000\",\"6ac33339a3fc\"],...]')\n"
         "输入: pairs_json 是 JSON 字符串, 每对是 [m, c] 各 12 hex chars (至少 2 对).\n"
         "主算法: 32-bit 子密钥中间相遇 (des_mitm32.c), 正确恢复完整 64-bit key\n"
@@ -302,7 +302,7 @@ class DesCryptanalysisTool(Tool):
         k1base: int = 0,
         **_: Any,
     ) -> str:
-        # Sprint 14 P3: 默认用 MITM (比 Z3 快 ~100x, ~10s vs ~120s)
+        # 默认用 MITM (比 Z3 快 ~100x, ~10s vs ~120s)
         # Z3 32 轮 DES 求解太复杂, 经常 timeout unknown
         # MITM 2^24 + 2^24 = 2^25 总复杂度, Python ~10s, 100% 成功
         if method == "mitm":
@@ -314,20 +314,20 @@ class DesCryptanalysisTool(Tool):
         return self._execute_z3(pairs_json, max_seconds)
 
     def _execute_mitm(self, pairs_json: str, nbits: int = 32, k0base: int = 0, k1base: int = 0) -> str:
-        """MITM 攻击实现 (Sprint 14 P3 + P4 + P5).
+        """MITM 攻击实现 （ P4 ).
 
-        Sprint 14 P4: 优先使用 C 加速版 (上传 des_mitm.c 到 Kali, 编译, 运行)
+        优先使用 C 加速版 (上传 des_mitm.c 到 Kali, 编译, 运行)
                       比 Python MITM 快 ~5-10x (Python 10s → C 1-2s)
-        Sprint 14 P5: 三层 fallback
+        三层 fallback
                       1. C-MITM (24-bit, 1-2s) - 仅在 sub_key 高 8 位 = 0 时成功
                       2. Python MITM (24-bit, 60-90s) - 同样限制
                       3. Z3 32-bit fallback (30-60s) - 求解 32-bit sub-key
-        Sprint 14 P5 限制: Z3 对 32-bit sub-key 经常 unknown (test_des_result2.txt)
+        限制: Z3 对 32-bit sub-key 经常 unknown (test_des_result2.txt)
                           已知 6 pairs + 120s timeout = unknown
         """
         # 解析 pairs
         import json as _json
-        # Sprint 14 P4: 容错 single-quote JSON
+        # 容错 single-quote JSON
         try:
             pairs_raw = _json.loads(pairs_json)
         except _json.JSONDecodeError:
@@ -354,12 +354,12 @@ class DesCryptanalysisTool(Tool):
         except (ValueError, TypeError, _json.JSONDecodeError) as e:
             return f"ERROR: pairs_json 解析失败: {e}"
 
-        # Sprint 14 P4: 优先尝试 24-bit C 加速版本 (仅当子密钥高 8 位=0 时成功, 秒级)
+        # 优先尝试 24-bit C 加速版本 (仅当子密钥高 8 位=0 时成功, 秒级)
         c_result = self._try_c_mitm(pairs)
         if c_result and "SUCCESS" in c_result:
             return c_result
 
-        # Sprint 18: 磁盘预检 + 有限 nbits 尝试, 防止全量 32-bit MITM 占满磁盘
+        # 磁盘预检 + 有限 nbits 尝试, 防止全量 32-bit MITM 占满磁盘
         # 全量 32-bit MITM 需 ~86GB 磁盘 + 20 分钟, 仅在显式请求且磁盘充裕时才运行
         if nbits >= 32:
             # 先快速检测可用磁盘
@@ -386,12 +386,12 @@ class DesCryptanalysisTool(Tool):
         if py_result and "KEY" in py_result and "0x" in py_result and "ERROR" not in py_result[:50]:
             return py_result
 
-        # Sprint 18: Z3 兜底加长时间 (300s 代替 60s, 32-bit 子密钥有更高概率收敛)
+        # Z3 兜底加长时间 (300s 代替 60s, 32-bit 子密钥有更高概率收敛)
         z3_result = self._try_z3_fallback(pairs, max_seconds=300)
         return z3_result
 
     def _try_z3_fallback(self, pairs: list[tuple[int, int]], max_seconds: int = 30) -> str:
-        """Sprint 14 P5: Z3 32-bit sub-key 求解 fallback.
+        """Z3 32-bit sub-key 求解 fallback.
 
         当 C-MITM 和 Python MITM 都失败时调用.
         使用 2-3 pairs (Z3 对多于 2 对的速度明显变慢), 30s timeout.
@@ -406,7 +406,7 @@ class DesCryptanalysisTool(Tool):
         return self._execute_z3(pairs_json=z3_json, max_seconds=max_seconds)
 
     def _try_c_mitm(self, pairs: list[tuple[int, int]]) -> str | None:
-        """Sprint 14 P4: 尝试用 C 加速 MITM. 返回 None 表示 C 不可用."""
+        """尝试用 C 加速 MITM. 返回 None 表示 C 不可用."""
         import base64
         import os
 
@@ -446,7 +446,7 @@ class DesCryptanalysisTool(Tool):
         r = self.ssh.exec_cmd(cmd, timeout=90)
         if r.is_success and "SUCCESS" in (r.stdout or ""):
             return (
-                f"=== Narrow DES C-MITM (Sprint 14 P4) ===\n"
+                f"=== Narrow DES C-MITM ===\n"
                 f"{_truncate(r.stdout + r.stderr, 4000)}"
             )
         return None  # 失败, 回退到 Python
@@ -459,7 +459,7 @@ class DesCryptanalysisTool(Tool):
         k0base: int = 0,
         k1base: int = 0,
     ) -> str:
-        """Sprint 14 P6: 完整 32-bit 子密钥 MITM (des_mitm32.c).
+        """完整 32-bit 子密钥 MITM (des_mitm32.c).
 
         对两个 32-bit 子密钥做 2^32 + 2^32 中间相遇, 正确恢复完整 64-bit key.
         旧版 24-bit MITM 假设子密钥高 8 位 = 0, 对真实部署 (sha256(flag)[:8] 派生)
@@ -499,7 +499,7 @@ class DesCryptanalysisTool(Tool):
         # 磁盘预检: 按 nbits 估算所需空间 (2 趟各 2^nbits 条 10 字节记录)
         need_bytes = 2 * (1 << nbits) * 10
         need_kb = need_bytes // 1024 + 1 * 1024 * 1024  # +1GB 余量 (实测 80GB 峰值)
-        # Sprint 15 P3 修复: 之前用 {mitm_dir} 但目录不存在, df 返回空, 误报磁盘不足.
+        # 修复: 之前用 {mitm_dir} 但目录不存在, df 返回空, 误报磁盘不足.
         # 现在用 /root (mitm_dir 的父目录, 一定存在) 检查可用空间.
         dr = self.ssh.exec_cmd(
             "df -Pk /root 2>/dev/null | awk 'NR==2{print $4}'", timeout=10
@@ -532,7 +532,7 @@ class DesCryptanalysisTool(Tool):
         out = (r.stdout or "").strip()
         if "FOUND" in out:
             return (
-                f"=== Narrow DES 32-bit MITM (Sprint 14 P6) ===\n"
+                f"=== Narrow DES 32-bit MITM ===\n"
                 f"{_truncate(out + '\n--- log ---\n' + (r.stderr or ''), 4000)}"
             )
         if "NOTFOUND" in out:
@@ -671,7 +671,7 @@ def _mitm(pairs):
     print(f"  Phase 2+3 done. {{len(cands)}} candidates.")
     return cands
 
-print("=== Narrow DES MITM (Sprint 14 P3) ===")
+print("=== Narrow DES MITM ===")
 print(f"  Known pairs: {{len(PAIRS)}}")
 for i, (m, c) in enumerate(PAIRS):
     print(f"  Pair {{i+1}}: m=0x{{m:012x}}, c=0x{{c:012x}}")
@@ -712,7 +712,7 @@ print("Done")
         )
         output = r.stdout or ""
         if output:
-            return f"=== Narrow DES MITM (Sprint 14 P3) ===\n{_truncate(output, 6000)}"
+            return f"=== Narrow DES MITM ===\n{_truncate(output, 6000)}"
         return f"ERROR: MITM 失败: {r.stderr[:300] or 'no output'}"
 
     def _execute_z3(self, pairs_json: str, max_seconds: int) -> str:
@@ -820,7 +820,7 @@ def encrypt_z3(msg, k0, k1, rounds=32):
         return Concat(Extract(23, 0, L), Extract(23, 0, R))
 
 
-print("=== Narrow DES Cryptanalysis (Sprint 14 P2) ===")
+print("=== Narrow DES Cryptanalysis ===")
 print(f"  Known pairs: {len(PAIRS)}")
 for i, (m, c) in enumerate(PAIRS):
     print(f"  Pair {i+1}: m=0x{m:012x}, c=0x{c:012x}")
@@ -919,12 +919,12 @@ print("Done")
         )
         output = r.stdout or ""
         if output:
-            return f"=== Narrow DES Cryptanalysis (Sprint 14 P2) ===\n{_truncate(output, 6000)}"
+            return f"=== Narrow DES Cryptanalysis ===\n{_truncate(output, 6000)}"
         return f"ERROR: 攻击失败: {r.stderr[:300] or 'no output'}"
 
 
 # ============ 工厂函数 ============
 
 def des_tools(ssh_client: SSHClient) -> list[Tool]:
-    """返回 DES 密码分析工具集 (Sprint 14 P2)."""
+    """返回 DES 密码分析工具集."""
     return [DesCryptanalysisTool(ssh_client)]

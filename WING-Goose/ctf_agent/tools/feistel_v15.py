@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Sprint 15 P0 - 正确实现 Crypto_Reverse disasm 算法 (验证用).
+"""正确实现复杂逆向题 disasm 算法 (验证用).
 
-按 main_disasm.txt 真实 disasm 实现:
+按真实反汇编实现:
 - ror32(x, n) - rotate right 32 bits by n
 - expand_key(master_key_64) - 8 round keys (32-bit each)
 - mix32(R, round_key) - F-function (MurmurHash3 风格)

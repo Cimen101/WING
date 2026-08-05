@@ -1,4 +1,4 @@
-// Sprint 15 P0 - brute_feistel v3: 测试各种 plain 假设
+// brute_feistel v3: 测试各种 plain 假设
 // 假设:
 //   1. 整个 16 字节 = "athena{? + 8 字节 (含 }+pad)"
 //   2. 或者 block 1 = 全 NUL, block 2 = 全 NUL

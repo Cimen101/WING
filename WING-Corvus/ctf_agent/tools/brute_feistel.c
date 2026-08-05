@@ -1,4 +1,4 @@
-// Sprint 15 P0 - Crypto_Reverse 2^32 brute-force (C 加速) - LE 字节序
+// 复杂逆向题 2^32 暴力破解 (C 加速) - LE 字节序
 // 按 main_disasm.txt 真实 disasm 实现:
 // - ror32, expand_key, mix32, block_cipher
 // - LE 字节序 (binary 是 x86-64, 默认小端)
@@ -12,7 +12,7 @@
 //   2^32 key search (low 32 bits), 1 thread ~ 25-50s
 //
 // 用法: ./brute_feistel [c1] [c2] [p1] [p2] [use_high_ff]
-// 默认值: Crypto_Reverse 真实题密文
+// 默认值: 复杂逆向题密文
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -64,7 +64,7 @@ static uint64_t block_cipher(uint64_t plain, uint64_t key) {
 }
 
 int main(int argc, char *argv[]) {
-    // 默认值: Crypto_Reverse encrypted_flag.bin (LE)
+    // 默认值: 复杂逆向题加密文件 encrypted_flag.bin (LE)
     uint64_t c1 = (argc >= 2) ? strtoull(argv[1], NULL, 16) : 0xab28667c0fc996f7ull;
     uint64_t c2 = (argc >= 3) ? strtoull(argv[2], NULL, 16) : 0xea61293090fc4b5dull;
     uint64_t p1 = (argc >= 4) ? strtoull(argv[3], NULL, 16) : 0x007b616e65687461ull;  // "athena{?" LE

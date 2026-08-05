@@ -1,7 +1,7 @@
-"""L2 ECDSA 攻击工具 (Sprint 14 P0 新增).
+"""L2 ECDSA 攻击工具 (新增).
 
 为 Tiny_ECC_Tweak 类 ECDSA nonce reuse 攻击提供专用工具,
-无需依赖庞大的 sagemath, 适合 Sprint 14 P0 优化 Tiny_ECC.
+无需依赖庞大的 sagemath, 适合 优化 Tiny_ECC.
 
 适用场景:
 - 2 个 ECDSA 签名 (sig1, sig2) 共享相同的 r (即 nonce k 复用)
@@ -69,7 +69,7 @@ _SUPPORTED_CURVES = {
 # ============ EcdsaNonceReuseTool ============
 
 class EcdsaNonceReuseTool(Tool):
-    """ECDSA nonce reuse 攻击工具 (Sprint 14 P0).
+    """ECDSA nonce reuse 攻击工具 ().
 
     用途: 两个 ECDSA 签名共享 r (即 k 复用) 时, 恢复私钥 d 并自动解 AES-GCM.
     适用: 2 个 (z, r, s) 签名 + pubkey + aes_nonce + aes_ciphertext (可选).
@@ -255,7 +255,7 @@ aes_ct_hex = '__AES_CT__'
 aes_key_mode = '__AES_KEY_MODE__'
 aes_key_len = __AES_KEY_LEN__
 
-print(f"=== ECDSA Nonce Reuse 攻击 (Sprint 14 P0) ===")
+print(f"=== ECDSA Nonce Reuse 攻击 () ===")
 print(f"  curve = {curve_name}")
 print(f"  hash_algo = {hash_algo}")
 print(f"  r1 == r2 ? {r1 == r2}")
@@ -388,5 +388,5 @@ def _hash_msg(msg: str, algo: str) -> bytes:
 # ============ 工厂函数 ============
 
 def ecdsa_tools(ssh_client: SSHClient) -> list[Tool]:
-    """返回 ECDSA 攻击工具集 (Sprint 14 P0)."""
+    """返回 ECDSA 攻击工具集 ()."""
     return [EcdsaNonceReuseTool(ssh_client)]

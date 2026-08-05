@@ -36,7 +36,7 @@ class MidTermMemory:
 
     用法：
         mem = MidTermMemory()  # 内存库
-        mem.add_fact("task-1", "target_ip", "192.168.1.1")
+        mem.add_fact("task-1", "target_ip", "192.0.2.1")
         mem.add_fact("task-1", "open_ports", "22,80,443")
         facts_text = mem.format_facts("task-1")  # 注入 prompt
     """

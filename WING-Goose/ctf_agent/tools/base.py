@@ -15,7 +15,7 @@ from typing import Any
 
 
 def _robust_json_loads(text: str) -> Any:
-    """容错 JSON 解析 (Sprint 32.2).
+    """容错 JSON 解析.
 
     背景: LLM (deepseek-v4-flash) 输出复杂命令的 Action Input 时,
     常出现: JSON 后跟多余字符 ("Extra data"), 尾随逗号, markdown 装饰等.

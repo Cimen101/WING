@@ -11,7 +11,7 @@
  *   后向 backward_16(ciphertext, k1) -> 同一中间状态
  *   两半独立, 用 2 对明文-密文构造 96-bit meet 值, 分桶落盘后 join.
  *
- * 性能 (Sprint 14 P6 + OpenMP):
+ * 性能 (OpenMP):
  *   - 枚举两趟各 2^NB 个半轮次, OpenMP 并行 (默认全部核).
  *   - 每线程写独立分桶文件, pass 结束合并为 fwd_<b>.bin / bwd_<b>.bin.
  *   - 每条记录仅 10 字节: 48-bit meet 指纹 + 4 字节子密钥.
@@ -340,7 +340,7 @@ int main(int argc, char **argv) {
         long cap = 1024;
         while (cap * 2 < n_fwd * 2) cap *= 2;
         if (cap < 1024) cap = 1024;
-        /* Sprint 15 P3: cap 上限 1<<22 (4M entries, ~32MB) 避免 32-bit 搜索时 32GB htab OOM */
+        /* cap 上限 1<<22 (4M entries, ~32MB) 避免 32-bit 搜索时 32GB htab OOM */
         if (cap > (1L << 22)) cap = 1L << 22;
         long *htab = (long *)calloc((size_t)cap, sizeof(long));
         if (!htab) { free(fraw); continue; }

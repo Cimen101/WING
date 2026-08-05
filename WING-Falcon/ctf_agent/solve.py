@@ -10,7 +10,7 @@
 
 输入 (task JSON, 见 readme):
     {
-      "challenge_id": "nss_2314",   // 题目 ID
+      "challenge_id": "nss_demo",   // 题目 ID
       "title": "题目名",
       "desc": "任务描述 (题面+附件路径+靶机URL+规则)",
       "type": "web",                // 题型
@@ -18,8 +18,8 @@
       "max_steps": 0,               // 0=自适应
       "max_seconds": 1500.0,        // 熔断时间
       "retry_hint": "",             // 重试提示
-      "force_max_thinking": false,  // Sprint 26: 强制 max 思考强度
-      "max_submissions": 1,         // Sprint 26: 单轮最大提交次数
+      "force_max_thinking": false,  // 强制 max 思考强度
+      "max_submissions": 1,         // 单轮最大提交次数
     }
 
 输出 (stdout JSON Lines, 每行一个对象):
@@ -39,7 +39,7 @@
     - stdout 只输出 JSONL; 第三方库的 print 会被包装成 log 行
     - 经验/技能/记忆/自学习全部在 agent 侧完成, 全局共享
     - 无内部超时线程: 子进程模型下, 调用器负责硬超时 kill
-    - Sprint 26: 协议版本 1.1, 新增 heartbeat/submission/control
+    - 协议版本 1.1, 新增 heartbeat/submission/control
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ from ctf_agent.tools import default_tools
 
 # ── 协议输出 ──────────────────────────────────────────────────
 
-PROTOCOL_VERSION = "1.1"  # Sprint 26: 协议版本化
+PROTOCOL_VERSION = "1.1"  # 协议版本化
 
 # 强制 unbuffered: 解决 Python 文本模式 bufsize=1 无效的实时性问题
 # (Python 文档: bufsize=1 行缓冲只在二进制模式下生效, 文本模式被忽略)
@@ -84,7 +84,7 @@ class _ProtocolStdout:
     def __init__(self, real) -> None:
         self._real = real
         self.encoding = getattr(real, "encoding", "utf-8")
-        # 强制行缓冲 (Sprint 26: 解决实时性问题)
+        # 强制行缓冲 (解决实时性问题)
         try:
             real.reconfigure(line_buffering=True)
         except Exception:
@@ -105,7 +105,7 @@ class _ProtocolStdout:
 
 _real_stdout: Any = sys.stdout
 
-# Sprint 26: 强制 unbuffered
+# 强制 unbuffered
 try:
     _real_stdout.reconfigure(line_buffering=True)
 except Exception:
@@ -125,7 +125,7 @@ def _log(level: str, message: str) -> None:
     _out({"type": "log", "level": level, "message": message})
 
 
-# ── 心跳机制 (Sprint 26) ──────────────────────────────────────
+# ── 心跳机制 ──────────────────────────────────────
 # 每 15s 输出 heartbeat 行, 让调用器知道 agent 还活着
 # 解决: 长时间 LLM 推理期间无输出, 调用器无法区分"agent 卡住"与"正在思考"
 
@@ -165,7 +165,7 @@ def _set_heartbeat(step: int, phase: str) -> None:
     _heartbeat_phase = phase
 
 
-# ── stdin 统一分发器 (Sprint 30) ──────────────────────────────
+# ── stdin 统一分发器 ──────────────────────────────
 # 解决: stop-listener 和 submission-handler 竞争 stdin 的问题.
 # 原设计: 两个线程各自 readline(sys.stdin), stop-listener 可能吞掉
 #         submission 响应 {"correct":true}, 导致 agent 误以为提交失败.
@@ -286,7 +286,7 @@ def _make_on_step() -> Any:
 
 
 def _make_submission_handler() -> Any:
-    """Sprint 26/30: 构造 submission_handler 回调 (从队列读取响应, 无 stdin 竞争).
+    """构造 submission_handler 回调 (从队列读取响应, 无 stdin 竞争).
 
     机制: agent 找到候选 flag 后调用本回调:
       1. 向 stdout 输出 {"type":"submission","flag":...} JSONL 行
@@ -294,7 +294,7 @@ def _make_submission_handler() -> Any:
       3. 返回 (correct, feedback) 给 ReActEngine
       4. 如果收到 stop 信号, 返回失败并标记停止
 
-    Sprint 30 修复: 不再用 selectors 直接读 stdin (会与 stop-listener 竞争,
+    修复: 不再用 selectors 直接读 stdin (会与 stop-listener 竞争,
     且 Windows 上 selectors 不支持 stdin 导致 WinError 10038).
     改为从 _submission_queue 读取, 由 stdin 统一分发器放入.
     """
@@ -317,7 +317,7 @@ def _make_submission_handler() -> Any:
 def _build_engine_with_timeout(task: dict[str, Any], settings: Any, timeout: float = 150.0):
     """构造引擎, 但 SSH 连接等初始化放在子线程, 超时则快速失败.
 
-    背景 (Sprint 21 复盘 #2314): 无防护时 SSH 连接挂起会让 agent 进程
+    背景 (历史复盘): 无防护时 SSH 连接挂起会让 agent 进程
     全程无输出, 调用器只能等满 max_seconds 再 kill, 白白浪费整题时间.
     这里 150s 超时后抛 TimeoutError, solve_task 会输出 result 快速失败.
     """
@@ -353,7 +353,7 @@ def _build_engine(task: dict[str, Any], settings: Any):
     ssh.connect()
 
     llm = RoutedLLMClient(settings=settings)
-    # Sprint 32.5: 应用 controller 领题前的冒烟测试标记,
+    # 应用 controller 领题前的冒烟测试标记,
     # 快速跳过不可用 provider, 避免 45s*3 超时重试浪费时间
     try:
         llm.apply_smoke_from_file(str(_PROJECT_ROOT / "data" / "api_smoke.json"))
@@ -375,14 +375,14 @@ def _build_engine(task: dict[str, Any], settings: Any):
     if max_steps <= 0:
         max_steps = breaker._dynamic_max_steps
 
-    # Sprint 26: 多次提交机制 — task JSON 配置 max_submissions
+    # 多次提交机制 — task JSON 配置 max_submissions
     # max_submissions=1 (默认) = 传统单次提交模式; >1 = 多次提交模式
     max_submissions = int(task.get("max_submissions") or 1)
 
-    # Sprint 22.5: Skill 库 (自学习积累的套路), 同一实例传给 engine 和 coordinator
+    # Skill 库 (自学习积累的套路), 同一实例传给 engine 和 coordinator
     skill_library = SkillLibrary()
 
-    # Sprint 27: 长期记忆 (RAG), 供巡查指导器查询历史 writeup
+    # 长期记忆 (RAG), 供巡查指导器查询历史 writeup
     # 失败时静默降级为 None (coordinator 走纯规则预检)
     long_term = None
     try:
@@ -402,23 +402,23 @@ def _build_engine(task: dict[str, Any], settings: Any):
         challenge_difficulty=difficulty or None,
         breaker=breaker,
         on_step=_make_on_step(),
-        # Sprint 22.5: 接入 Skill 库 — 自学习积累的套路要能注入解题 prompt
+        # 接入 Skill 库 — 自学习积累的套路要能注入解题 prompt
         skill_library=skill_library,
-        # Sprint 26: 重试时强制 max 思考强度 (NSS Runner retry_hint 非空时设置)
+        # 重试时强制 max 思考强度 (NSS Runner retry_hint 非空时设置)
         force_max_thinking=bool(task.get("force_max_thinking", False)),
-        # Sprint 26: 多次提交机制 (max_submissions>1 时启用)
+        # 多次提交机制 (max_submissions>1 时启用)
         submission_handler=_make_submission_handler() if max_submissions > 1 else None,
         max_submissions=max_submissions,
-        # Sprint 27: 巡查指导器 — LLM 驱动的智能旁观者, 查询知识库辅助判断
+        # 巡查指导器 — LLM 驱动的智能旁观者, 查询知识库辅助判断
         coordinator=_make_coordinator(llm, skill_library, long_term),
-        # Sprint 29: 巡查日志回调 (输出 coordinator JSONL, 便于观察巡查行为)
+        # 巡查日志回调 (输出 coordinator JSONL, 便于观察巡查行为)
         on_coordinator=_make_on_coordinator(),
     )
     return engine, max_steps
 
 
 def _make_coordinator(llm: Any = None, skill_library: Any = None, long_term: Any = None) -> Any:
-    """Sprint 27: 创建巡查指导器 (LLM 驱动的智能旁观者).
+    """创建巡查指导器 (LLM 驱动的智能旁观者).
 
     Args:
         llm: LLM 客户端 (用于深度分析, None 时降级为纯规则预检)
@@ -430,14 +430,14 @@ def _make_coordinator(llm: Any = None, skill_library: Any = None, long_term: Any
         llm=llm,
         skill_library=skill_library,
         long_term=long_term,
-        check_interval=10,  # Sprint 32.4c: 15→10, 落实"10 轮 1 巡查" (之前硬编码 15 覆盖默认值)
+        check_interval=10,  # 15→10, 落实"10 轮 1 巡查" (之前硬编码 15 覆盖默认值)
         first_check=10,
         lookback=10,
     )
 
 
 def _make_on_coordinator() -> Any:
-    """Sprint 29: 构造巡查日志回调, 输出 coordinator JSONL 行.
+    """构造巡查日志回调, 输出 coordinator JSONL 行.
 
     每次巡查后调用, 输出 {"type":"coordinator", ...} 让调用器能观察巡查行为.
     """
@@ -455,7 +455,7 @@ def _make_on_coordinator() -> Any:
             "revert_guidance": bool(getattr(guidance, "revert_guidance", False)),
             "remove_forbidden": list(getattr(guidance, "remove_forbidden", []) or []),
             "analysis_summary": getattr(guidance, "analysis_summary", "") or "",
-            # Sprint 32.7: 透传推论分级 + 反思 (供调用器完整日志显示)
+            # 透传推论分级 + 反思 (供调用器完整日志显示)
             "reflection": getattr(guidance, "reflection", "") or "",
             "belief_state": list(getattr(guidance, "belief_state", []) or []),
         })
@@ -490,7 +490,7 @@ def _learn(result: ReActResult, task: dict[str, Any], desc: str) -> None:
 
 def solve_task(task: dict[str, Any]) -> int:
     """执行一次求解 (返回进程退出码)."""
-    # Sprint 26: 重置 stop 信号 (新任务开始)
+    # 重置 stop 信号 (新任务开始)
     from ctf_agent.stop_signal import reset as _reset_stop
     _reset_stop()
 
@@ -518,18 +518,18 @@ def solve_task(task: dict[str, Any]) -> int:
                      f"type={task.get('type', '?')} difficulty={task.get('difficulty', '?')} "
                      f"max_steps={max_steps} model={settings.executor_model}")
         _out({"type": "start",
-              "protocol_version": PROTOCOL_VERSION,  # Sprint 26: 协议版本
+              "protocol_version": PROTOCOL_VERSION,  # 协议版本
               "challenge_id": task.get("challenge_id", ""),
               "title": task.get("title", ""),
               "challenge_type": task.get("type", ""),
               "difficulty": task.get("difficulty", ""),
               "max_steps": max_steps,
               "max_seconds": float(task.get("max_seconds") or 0),
-              "max_submissions": int(task.get("max_submissions") or 1),  # Sprint 26
+              "max_submissions": int(task.get("max_submissions") or 1),  # 
               "model": settings.executor_model})
-        # Sprint 26: 启动心跳 (引擎构造成功后)
+        # 启动心跳 (引擎构造成功后)
         _start_heartbeat()
-        # Sprint 30: 启动 stdin 统一分发器 (替代 stop-listener, 避免与 submission-handler 竞争)
+        # 启动 stdin 统一分发器 (替代 stop-listener, 避免与 submission-handler 竞争)
         _start_stdin_dispatcher()
     except Exception as e:  # noqa: BLE001 - 引擎构造失败
         _log("ERROR", f"引擎构造失败: {type(e).__name__}: {e}")

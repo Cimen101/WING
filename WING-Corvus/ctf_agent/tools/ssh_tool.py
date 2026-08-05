@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from ctf_agent.ssh import SSHClient
-from ctf_agent.ssh.safety import (  # Sprint 6 加固
+from ctf_agent.ssh.safety import (  # 加固
     DangerLevel,
     audit_command,
     audit_workspace,
@@ -40,7 +40,7 @@ def _truncate(text: str, max_len: int = _MAX_OUTPUT) -> str:
     return text[:max_len] + _TRUNCATED_SUFFIX.format(total=len(text))
 
 
-# ============ Sprint 32.10: 长任务超时转后台 (B+ 方案) ============
+# ============ 长任务超时转后台 (B+ 方案) ============
 # 背景: ssh_exec/ssh_python 的同步调用在长任务 (exploit 运行/本地验证/爆破)
 # 上会阻塞 LLM 数分钟. 方案: 命令经 nohup 后台运行 + 日志文件轮询,
 # 超过等待窗口后自动"转后台", 立即返回 PID + 日志路径, LLM 可继续做别的,
@@ -188,11 +188,11 @@ def _parse_bg_output(result: Any, command: str, wait_sec: int) -> str | None:
     return "\n".join(parts)
 
 
-# ============ Sprint 7 P0-2: 环境降级检测 ============
+# ============ 环境降级检测 ============
 # 当 agent 在沙箱中尝试 docker build / 启动服务失败时，自动注入降级提示，
 # 引导 agent 切换到"静态分析源码"模式（避免反复重试 docker 卡死 30 分钟）。
 # 匹配关键词（大小写不敏感）：
-# Sprint 32.7: 所有 .* 改为 .{0,300} (有界长度) — 嵌套 .* 交替在长输出上
+# 所有 .* 改为 .{0,300} (有界长度) — 嵌套 .* 交替在长输出上
 # 会灾难性回溯 (CPU 100% 死锁), 有界量词保证最坏回溯 O(300*n) 毫秒级完成.
 _ENV_DEGRADATION_PATTERNS: list[tuple[str, str, str]] = [
     # (匹配关键词, 触发条件描述, 降级建议)
@@ -229,12 +229,12 @@ _ENV_DEGRADATION_PATTERNS: list[tuple[str, str, str]] = [
 def _detect_env_degradation(
     command: str, stdout: str, stderr: str, exit_code: int
 ) -> str | None:
-    """Sprint 7 P0-2: 检测环境降级信号，返回降级建议.
+    """检测环境降级信号，返回降级建议.
 
     只在命令失败（exit_code != 0）时触发，避免误报。
     返回 None 表示无降级需求。
 
-    Sprint 32.7 修复: 长输出导致正则灾难性回溯 (CPU 100% 卡死).
+    修复: 长输出导致正则灾难性回溯 (CPU 100% 卡死).
     _ENV_DEGRADATION_PATTERNS 含嵌套 .* 交替, 对超大 stdout (hexdump 等)
     会指数级回溯. 现在截断检测输入: stdout/stderr 只取尾部 4000/2000 字符,
     环境降级信号 (command not found 等) 都出现在输出尾部, 截断不影响检测.
@@ -286,7 +286,7 @@ class SSHExecTool(Tool):
             },
             "timeout": {
                 "type": ["integer", "string"],
-                "description": "超时控制 (Sprint 32.10): 整数秒数 (如 180) 或档位 "
+                "description": "超时控制: 整数秒数 (如 180) 或档位 "
                     "quick=30s / normal=120s(默认) / long=600s / background=立即后台。"
                     "超过等待窗口命令自动转后台运行 (不杀进程), 返回 PID+日志路径, "
                     "用 ssh_exec 'cat <日志>' 查看结果。",
@@ -319,10 +319,10 @@ class SSHExecTool(Tool):
             return "ERROR: command 不能为空"
 
         effective_cwd = cwd or self.default_cwd
-        # Sprint 32.10: timeout 支持语义档位/秒数, 0 = 立即转后台
+        # timeout 支持语义档位/秒数, 0 = 立即转后台
         wait_sec = _resolve_timeout(timeout)
 
-        # Sprint 6 加固：先审计工作目录（白名单）
+        # 加固：先审计工作目录（白名单）
         ws_audit = audit_workspace(effective_cwd)
         if not ws_audit.allowed:
             return (
@@ -330,7 +330,7 @@ class SSHExecTool(Tool):
                 f"  允许的工作区: /tmp/ctf_workspace/, /tmp/ctf_real2/, /tmp/ctf_real3/"
             )
 
-        # Sprint 6 加固：审计命令（危险黑名单）
+        # 加固：审计命令（危险黑名单）
         cmd_audit = audit_command(command)
         if not cmd_audit.allowed:
             return (
@@ -344,7 +344,7 @@ class SSHExecTool(Tool):
         else:
             cmd_audit_warning = ""
 
-        # Sprint 32.10: 长任务后台执行 — 命令经 nohup 后台运行 + 轮询等待,
+        # 长任务后台执行 — 命令经 nohup 后台运行 + 轮询等待,
         # 超过等待窗口自动转后台 (不杀进程), 命令只执行一次.
         import base64
         payload_b64 = base64.b64encode(command.encode("utf-8")).decode("ascii")
@@ -382,7 +382,7 @@ class SSHExecTool(Tool):
             # 错误命令标注（便于 LLM 识别失败）
             if not result.is_success and result.exit_code != 0:
                 output = f"ERROR: 命令退出码 {result.exit_code}\n{output}"
-            # Sprint 7 P0-2: 环境降级检测（docker 不可用 / 端口不可达）
+            # 环境降级检测（docker 不可用 / 端口不可达）
             # 当 agent 尝试 docker build 或连接动态服务失败时，注入降级建议
             # 引导 agent 切换到"静态分析源码"模式，避免反复重试卡死 30 分钟
             degradation_hint = _detect_env_degradation(
@@ -420,7 +420,7 @@ class SSHPythonTool(Tool):
             },
             "timeout": {
                 "type": ["integer", "string"],
-                "description": "超时控制 (Sprint 32.10): 整数秒数 (如 180) 或档位 "
+                "description": "超时控制: 整数秒数 (如 180) 或档位 "
                     "quick=30s / normal=120s(默认) / long=600s / background=立即后台。"
                     "超过等待窗口脚本自动转后台运行 (不杀进程), 返回 PID+日志路径, "
                     "用 ssh_exec 'cat <日志>' 查看结果。",
@@ -449,7 +449,7 @@ class SSHPythonTool(Tool):
         if not script or not script.strip():
             return "ERROR: script 不能为空"
 
-        # Sprint 32.10: timeout 支持语义档位/秒数, 0 = 立即转后台
+        # timeout 支持语义档位/秒数, 0 = 立即转后台
         wait_sec = _resolve_timeout(timeout)
 
         # 脚本 base64 传输 (避免转义问题)

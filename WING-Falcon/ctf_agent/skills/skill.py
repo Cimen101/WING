@@ -1,4 +1,4 @@
-"""Skill 数据结构 (Sprint 16 P11-1).
+"""Skill 数据结构 ().
 
 一个 Skill 是一段"可重用的解题模式", 包含:
 - vuln_class: 漏洞类型标识 (如 "cbc_bit_flipping")
@@ -43,7 +43,7 @@ class Skill:
         keywords: 注入提示用关键词 (与题目描述的简单 token 重叠)
         source_challenge_id: 具体 Skill 来自哪道题 (CONCRETE 才有)
         success_count: 已成功使用次数 (用于排序)
-        notes: 备注/坑点 (Sprint 16 P11-3 重点)
+        notes: 备注/坑点 (重点)
         created_at: 创建时间戳
     """
 

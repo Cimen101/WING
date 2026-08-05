@@ -176,7 +176,7 @@ class FileBus:
             out.append(m)
         return out, max_seq
 
-    # ---------- Sprint 36 (WING-Corvus): 总指挥协议 ----------
+    # ---------- 总指挥协议 ----------
     # report   = 战略层 → 总指挥 (重要线索 / 方向确认 / 死路确认, 三档)
     # directive= 总指挥 → 战略层 (方向校准 / 细化分工; 任务=方向性指引非强制枷锁)
 
@@ -213,7 +213,7 @@ class FileBus:
             task_no: 更新后的任务契约编号 (战略层据此更新持有的任务)
             priority: "MUST" 必须执行 | "SHOULD" 方向性建议 (默认, 非强制枷锁)
             reason: 指令依据 (总指挥 LLM 的推理, 引用汇报证据)
-            phase: Sprint 36.2 当前解题阶段 (P1/P2/P3/P4, 供战略层感知阶段注入任务)
+            phase: 当前解题阶段 (P1/P2/P3/P4, 供战略层感知阶段注入任务)
         """
         if not content or not content.strip():
             raise ValueError("content 不能为空")

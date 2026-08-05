@@ -1,7 +1,7 @@
 # WING-Corvus（渡鸦）设计与使用文档
 
 > **文档性质**：CTF 自动化解题系统 WING-Corvus 的完整设计文档 + 使用指南
-> **版本**：WING-Corvus（Sprint 36.2，协作小队 Coordinated Squad）
+> **版本**：WING-Corvus（协作小队 Coordinated Squad）
 > **最后更新**：2026-08-05
 > **上游版本**：WING-Goose（雁阵，含 swarm 三风格并行 / 总线 / 复盘 / docker 链）
 > **代码位置**：`_publish/wing/WING-Corvus/`（含 `ctf_agent/` 源码、`main.py`、`pyproject.toml`、`.env.example`）
@@ -71,7 +71,7 @@ WING-Corvus（渡鸦）是 WING 系列 CTF 自动化解题智能体的**第三�
 4. **任务 = 方向性指引，非强制枷锁**：总指挥下发的任务是"探索方向建议"，不是唯一路径；战略层遇明确死路可自动切换并事后汇报，不视为违抗。
 5. **静默是美德**：方向正确、各有进展时，总指挥与战略层都保持静默，不下发指令打断节奏；仅在出现全局性问题时才干预。
 6. **反幻觉优先**：flag 必须来自靶机/附件的真实工具观测（Flag 验证系统双通道把关）；无工具调用直接 Final Answer 会被拒绝；宁可老实失败也不编造答案。
-7. **证据分级驱动决策**：FACT/LIKELY 可作 MUST 依据，POSSIBLE 只能作 SHOULD 建议；无充分证据禁止否定方向（Sprint 36.1 强化）。
+7. **证据分级驱动决策**：FACT/LIKELY 可作 MUST 依据，POSSIBLE 只能作 SHOULD 建议；无充分证据禁止否定方向（强化）。
 
 ---
 
@@ -98,13 +98,13 @@ WING-Corvus（渡鸦）是 WING 系列 CTF 自动化解题智能体的**第三�
 
 - 汇报与推论统一采用四级分级：**FACT**（轨迹中直接观察到的确定信息）/ **LIKELY**（基于事实的合理推断）/ **POSSIBLE**（缺乏充分证据的推测）/ **DISPROVED**（被后续轨迹明确否定）。
 - 只有 FACT + LIKELY 可作 MUST 指令依据；POSSIBLE 只能作 SHOULD 建议。
-- 总指挥的 MUST 指令**必须引用明确理由**，无理由的 MUST 会被系统自动降级为 SHOULD（nss_2800 复盘中总指挥 MUST"直接请求 /utils.php"而该路径已被证实空/404，正是无依据 MUST 的教训）。
+- 总指挥的 MUST 指令**必须引用明确理由**，无理由的 MUST 会被系统自动降级为 SHOULD（历史复盘中总指挥 MUST"直接请求 /utils.php"而该路径已被证实空/404，正是无依据 MUST 的教训）。
 - 战略层判定"方向错误/死路/禁忌"必须基于 FACT 或 DISPROVED 级推论，或 ≥8 步持续完全无关操作；单次失败/单条异常响应 ≠ 死路。
 - flag 必须来自靶机/附件的真实工具观测（见第 8 章 Flag 验证系统）。
 
 ### 2.4 规则检测与 LLM 判断分层
 
-Sprint 36.2 的核心设计校准：**趋同/卡住等规则检测只产生"参考信号"，是否干预、干预强度（MUST/SHOULD）由总指挥 LLM 结合完整上下文判断**，避免死板代码误判（如把"系统性验证性推进"误判为死循环）。规则层负责客观事实（阶段切换信号、进度信号、无进展信号），LLM 层负责主观决策（是否干预、如何分配任务）。
+的核心设计校准：**趋同/卡住等规则检测只产生"参考信号"，是否干预、干预强度（MUST/SHOULD）由总指挥 LLM 结合完整上下文判断**，避免死板代码误判（如把"系统性验证性推进"误判为死循环）。规则层负责客观事实（阶段切换信号、进度信号、无进展信号），LLM 层负责主观决策（是否干预、如何分配任务）。
 
 ### 2.5 设计原则与多阶段升级方案的映射
 
@@ -177,7 +177,7 @@ Sprint 36.2 的核心设计校准：**趋同/卡住等规则检测只产生"参�
 
 ### 3.3 难度 → 并发度策略
 
-`DEFAULT_STYLES_BY_DIFFICULTY`（T3 结论）：easy 单路，medium/hard 三风格并行。但 2026-08 起 NSSCTF 难度评判不标准（easy 实为 middle/hard 也常见），config 中 `SWARM_ENABLED=true` 时**所有难度（含 easy）都走 3 风格并行 swarm**；`SWARM_ENABLED=false` 回退 T3 结论。
+`DEFAULT_STYLES_BY_DIFFICULTY`：easy 单路，medium/hard 三风格并行。但 2026-08 起 NSSCTF 难度评判不标准（easy 实为 middle/hard 也常见），config 中 `SWARM_ENABLED=true` 时**所有难度（含 easy）都走 3 风格并行 swarm**；`SWARM_ENABLED=false` 回退早期结论。
 
 ### 3.4 协作小队 vs 雁阵
 
@@ -306,7 +306,7 @@ class CommanderDirective:
 领题时总指挥基于题目信息（title / challenge_type / difficulty / task_desc）调用 LLM 做任务分解，输出 `assignments` 列表（每路恰好一个任务），要求：
 
 - **三路方向互斥**：不得指向同一类攻击面/同一工具/同一排查路径；若题目只有单一明显入口，也应从不同角度切入（如一路查入口过滤逻辑、一路查后端处理、一路查侧信道差异）。
-- **侦查广度按难度定制**（Sprint 36.2 校准）：easy 收敛（只覆盖最小必要信息源，快速进入 P2）；medium 标准（常规信息源全覆盖）；hard 发散（全面覆盖所有可能信息源，深度挖掘，不急于进入 P2）。
+- **侦查广度按难度定制**（校准）：easy 收敛（只覆盖最小必要信息源，快速进入 P2）；medium 标准（常规信息源全覆盖）；hard 发散（全面覆盖所有可能信息源，深度挖掘，不急于进入 P2）。
 - **解题合规约束**：任务必须要求 agent 从靶机/附件的真实工具观测中获取信息（访问靶机页面/接口、读取附件、交互调试），严禁指示"上网搜索题解/读取官方 writeup/查询 flags.txt"等非正常解题路径。
 - 每路任务带 **P1 阶段标记**：领题即 P1 侦查阶段，阶段信息随指令下发给战略层（`phase="P1"`）。
 
@@ -324,7 +324,7 @@ reports, new_cursor = b.check_reports(self.bus_key, cursor=self._report_cursor)
 
 ### 4.5 多阶段状态机（_phase_advance_rule）
 
-Sprint 36.2 重构为"**任务驱动 + 进度汇报驱动**"（非步数硬门槛），切换规则：
+重构为"**任务驱动 + 进度汇报驱动**"（非步数硬门槛），切换规则：
 
 | 切换 | 条件（客观汇报信号） | 说明 |
 |------|---------------------|------|
@@ -345,7 +345,7 @@ Sprint 36.2 重构为"**任务驱动 + 进度汇报驱动**"（非步数硬门�
 
 若只是发现"有可能方向"，则加入**备选列表**（`_alt_directions`），待主方向被证伪后才考虑启用。
 
-Sprint 36.2 校准：**P1 侦查阶段不确认主方向**——主方向须等三路侦查全部完成后由全局情报摘要整合确定（`_p1_synthesize`）；P1 期间 LLM 输出的 main_direction 一律忽略（避免过早锁定方向，防止重蹈 nss_2800 覆盖"过早锁定 basename 绕过"的覆辙）。P1 阶段只维护 alt_directions。
+校准：**P1 侦查阶段不确认主方向**——主方向须等三路侦查全部完成后由全局情报摘要整合确定（`_p1_synthesize`）；P1 期间 LLM 输出的 main_direction 一律忽略（避免过早锁定方向，防止重蹈此前复盘中的覆盖"过早锁定 basename 绕过"的覆辙）。P1 阶段只维护 alt_directions。
 
 LLM 分析时注入 `_main_direction_block`（当前主方向 + 备选方向 + 修改规则），供 LLM 对照判断。
 
@@ -382,15 +382,15 @@ LLM 失败时降级：`_fallback_p1_summary` 用汇报原文拼接摘要，不�
 LLM 输出 JSON（silent / directives / main_direction / alt_directions / belief_state / reasoning）。核心处理逻辑：
 
 - **静默原则**：`silent=true` 且 directives 为空时不下发任何指令（3 路方向分散、各有进展时不需要干预）。
-- **指令分级**：priority 只能是 MUST/SHOULD；**MUST 必须有非空 reason**（无理由的 MUST 自动降级为 SHOULD——反幻觉门槛，nss_2800 教训）。
+- **指令分级**：priority 只能是 MUST/SHOULD；**MUST 必须有非空 reason**（无理由的 MUST 自动降级为 SHOULD——反幻觉门槛，历史教训）。
 - **P3 阶段协调以引导为主**：除非指令含"返回P2"（漏洞验证失败），否则 P3 阶段所有转向类 MUST 指令**降级为 SHOULD**（死循环/方向调整由战略层负责）。
-- **实现卡点识别**（Sprint 36 复盘新增）：若汇报显示某路已理解攻击原理/已确认漏洞原语，但卡在具体实现细节（字节偏移取值、参数格式进制、工具调用参数、攻击脚本写法），应给出具体实现步骤引导（明确的命令/参数/进制/偏移），而非仅方向性建议——"临门一脚"干预价值最高。
+- **实现卡点识别**（复盘新增）：若汇报显示某路已理解攻击原理/已确认漏洞原语，但卡在具体实现细节（字节偏移取值、参数格式进制、工具调用参数、攻击脚本写法），应给出具体实现步骤引导（明确的命令/参数/进制/偏移），而非仅方向性建议——"临门一脚"干预价值最高。
 - **死路校准**：收到 dead_end 汇报 → 为该路重新分配方向（不视为违抗）。
 - 下发后更新任务契约（`cur.task = direction`）并记录上下文。
 
 ### 4.10 规则检测（趋同 / 卡住 / 无进展）
 
-Sprint 36.2 关键校准：**规则检测只产生参考信号，由 LLM 判断是否干预及干预强度**（`_rule_signals_block`），避免死板代码误判。三类信号：
+关键校准：**规则检测只产生参考信号，由 LLM 判断是否干预及干预强度**（`_rule_signals_block`），避免死板代码误判。三类信号：
 
 | 信号 | 检测逻辑 | 注入方式 |
 |------|----------|----------|
@@ -409,7 +409,7 @@ Sprint 36.2 关键校准：**规则检测只产生参考信号，由 LLM 判断�
 ```python
 b.post_directive(agent_id=d.style, task_id=self.bus_key, content=d.direction,
                  task_no=d.task_no, priority=d.priority, reason=d.reason,
-                 phase=self._phase)   # Sprint 36.2: 附带当前阶段
+                 phase=self._phase)   # 附带当前阶段
 ```
 
 - 每条 directive 写入总线 JSONL（kind=directive），战略层 `check_directives` 游标消费。
@@ -505,8 +505,8 @@ run_once(bus)
 
 战略层（`ctf_agent/agent/coordinator.py`，共约 1900 行）是"**智能旁观者**"：旁观者清，当局者迷。解题 agent 专注于当下可能陷入困境或方向走错，巡查指导器以第三者视角宏观审视完整行为轨迹，提供精准的战术指导和方向调整。在 WING-Corvus 中，每路 agent 有一个战略层实例，同时承担两项职责：
 
-1. **本路战术指导**（Sprint 27-35 能力）：方向检查、死循环检测、禁忌拦截、推论分级、异步巡查；
-2. **总指挥协作**（Sprint 36 新增能力）：任务契约、向总指挥汇报、指令消费、阶段感知。
+1. **本路战术指导**（能力）：方向检查、死循环检测、禁忌拦截、推论分级、异步巡查；
+2. **总指挥协作**（新增能力）：任务契约、向总指挥汇报、指令消费、阶段感知。
 
 设计原则：
 
@@ -517,7 +517,7 @@ run_once(bus)
 
 ### 5.2 巡查触发时机（should_check）
 
-Sprint 33 起为**异步事件驱动**：巡查分析在后台线程执行，不阻塞 agent 主循环，完成经事件召回注入后续步。
+起为**异步事件驱动**：巡查分析在后台线程执行，不阻塞 agent 主循环，完成经事件召回注入后续步。
 
 | 触发条件 | 说明 |
 |----------|------|
@@ -565,7 +565,7 @@ analyze(trajectory)
 
 ### 5.4 推论分级框架（belief_state）
 
-Sprint 32.6 核心改造：战略层每次分析必须基于**推论分级**，四档：
+核心改造：战略层每次分析必须基于**推论分级**，四档：
 
 1. **FACT**：轨迹中直接观察到的确定信息（如"step 24 POST 返回 HTTP 200"、"源码第 12 行含 unserialize($_POST['a'])"）。
 2. **LIKELY**：基于事实的合理推断，有充分证据支持（如"入口存在且可用"）。
@@ -574,7 +574,7 @@ Sprint 32.6 核心改造：战略层每次分析必须基于**推论分级**，�
 
 推论更新流程（强制）：**回顾 → 更新（升级/降级/证否）→ 新增 → 反思（reflection 必填）→ 决策**。只有 FACT + LIKELY 可以作为 MUST 干预依据；POSSIBLE 只能作为 SHOULD 建议；禁忌列表只能基于 FACT/DISPROVED。
 
-### 5.5 无充分证据禁止否定方向（Sprint 36.1 强化）
+### 5.5 无充分证据禁止否定方向（强化）
 
 在寻找漏洞的过程中，绝大多数方向在未获**充分证据**（FACT 级证伪）之前都可能是有效路径：
 
@@ -587,7 +587,7 @@ Sprint 32.6 核心改造：战略层每次分析必须基于**推论分级**，�
 
 ### 5.6 自我纠错（revert_guidance / remove_forbidden）
 
-Sprint 32.4c：巡查器用后续轨迹验证自己之前的判断：
+巡查器用后续轨迹验证自己之前的判断：
 
 - 上次指导后 agent 未按指导执行，但用自己的方式持续取得进展 → 撤销上次指导（`revert_guidance=true`），若方向正确保持沉默。
 - 禁忌列表中的操作后来被 agent 成功使用并突破 → `remove_forbidden` 移除误判项。
@@ -596,12 +596,12 @@ Sprint 32.4c：巡查器用后续轨迹验证自己之前的判断：
 
 ### 5.7 死循环检测与禁忌体系
 
-- **精确签名禁忌**（`_forbidden_signatures`，Sprint 35）：死循环自动将重复操作（action + action_input 前 100 字符归一化）加入禁忌，精确匹配避免关键词误伤不同命令。
+- **精确签名禁忌**（`_forbidden_signatures`）：死循环自动将重复操作（action + action_input 前 100 字符归一化）加入禁忌，精确匹配避免关键词误伤不同命令。
 - **关键词禁忌**（`_forbidden_actions`）：LLM 分析时生成（如"hashcat 爆破 cloud.zip 密码"连续失败后），提取 >3 字符关键词匹配拦截。
-- **MUST 未执行检测**（Sprint 32.4）：上次干预是 MUST 且主导工具未变 + 无实质进展（≥2 种不同 observation 才算进展）→ 升级为 MUST 阻断，同时追加禁忌。
+- **MUST 未执行检测**：上次干预是 MUST 且主导工具未变 + 无实质进展（≥2 种不同 observation 才算进展）→ 升级为 MUST 阻断，同时追加禁忌。
 - **拦截时机**：`intercept_forbidden` 在工具执行前检查（巡查间隔之外也拦截），避免继续浪费步数。
 
-### 5.8 分析瘫痪检测（Sprint 36）
+### 5.8 分析瘫痪检测
 
 复盘根因（linx/threshold/faulty_mayo 三题 hard 全败）：agent 在"理解/读源码/解析数据"阶段无限滞留，从不执行攻击脚本。检测逻辑：总步数 ≥ `execution_starvation_min_steps=20`（前期信息收集合理），且最近 8 步内无任何执行类工具（`_EXECUTION_TOOLS`：ssh_exec / ssh_python / docker_exec / docker_python / ssh_upload / docker_upload / http_request / exploit_template）→ 判定分析瘫痪，MUST 级干预要求立即写最小攻击脚本运行验证。
 
@@ -614,11 +614,11 @@ Sprint 32.4c：巡查器用后续轨迹验证自己之前的判断：
 
 **发散优先约束（WING-Corvus 2.0）**：若轨迹显示创新 agent 在**无充分证据时**向某一方向**深入重复**（同一思路连续 ≥3 步深挖、或反复微调同一假设），判定为"过早深入"，下发提示要求停止深入、回到发散状态（同时探索 2-3 条不同假设）。只有出现 FACT 级明确方向后，深入才合理。
 
-### 5.10 战略深化（strategic_direction，Sprint 34）
+### 5.10 战略深化（strategic_direction）
 
 双系统设计：主 LLM = 快思考（System 1，战术决策），巡查器 = 慢思考（System 2，战略决策）。非创新风格干预时，除 guidance 外还需给出 `strategic_direction`——在主 LLM 当前推理基础上**进一步深化细化**（下一步往哪个方向深挖/优先验证哪个假设/哪块区域还有未挖掘的线索），不是重复 guidance 的具体命令，不超过 200 字。沉默原则：方向未偏移时不注入任何内容。
 
-### 5.11 协作义务（Sprint 36）
+### 5.11 协作义务
 
 巡查干预时同时提醒发布关键线索到共享总线：
 
@@ -626,7 +626,7 @@ Sprint 32.4c：巡查器用后续轨迹验证自己之前的判断：
 
 战术层专注解题，但已验证的关键事实必须回流共享池，供战略层汇总与其他解题器参考，避免"各自独立解题、共享仅互相借鉴"（雁阵 v2 协作升级点 1）。
 
-### 5.12 总指挥协作能力（Sprint 36 新增）
+### 5.12 总指挥协作能力（新增）
 
 战略层在 WING-Corvus 中新增的总指挥协作能力（默认关闭，`commander_enabled=True` 且 bus 非空才启用；关闭时纯雁阵行为不变）：
 
@@ -661,7 +661,7 @@ Sprint 32.4c：巡查器用后续轨迹验证自己之前的判断：
 
 1. 游标拉取发给自己的新 directive；**只取最新一条**（避免过时指令累积注入，后续指令覆盖先前的）。
 2. **阶段感知**：directive 附带 phase（P1/P2/P3/P4）→ 更新 `_current_phase`（用于按阶段注入不同巡查任务）。
-3. **MUST 本地冲突校验**（WING-Corvus 升级，nss_2800 复盘）：总指挥基于跨 agent 汇报摘要决策，可能遗漏本 agent 已实证的死路。若指令方向与本地已验证死路（forbidden_actions / 精确签名）冲突：
+3. **MUST 本地冲突校验**（WING-Corvus 升级，历史复盘）：总指挥基于跨 agent 汇报摘要决策，可能遗漏本 agent 已实证的死路。若指令方向与本地已验证死路（forbidden_actions / 精确签名）冲突：
    - 不盲目强制（案例：总指挥 MUST"直接请求 /utils.php"，但本 agent 已证实该路径返回空/404，强制执行只会浪费步数）；
    - **降级为 SHOULD（本地证据优先）+ 事后 dead_end 回报总指挥**（reason 中标注"已降级为 SHOULD，以本地证据为准，已回报总指挥"）。
 4. 返回注入指导（`[总指挥·任务N] 方向\n[依据] reason`），主循环注入战术层 prompt；MUST 走持久重复机制，优先级高于巡查输出。
@@ -715,7 +715,7 @@ Sprint 32.4c：巡查器用后续轨迹验证自己之前的判断：
 
 每步循环按固定顺序执行：
 
-1. **步数软截断兜底**：`while True` + 进展感知软截断（Sprint 32.4b 修复 extend_steps 从未生效的 bug）——超过 max_steps 后不立即硬停，由 breaker 进展感知决定（持续有实质进展则继续，无进展超宽限期才退出；时间维度由 breaker 时间熔断兜底）。
+1. **步数软截断兜底**：`while True` + 进展感知软截断（修复 extend_steps 从未生效的 bug）——超过 max_steps 后不立即硬停，由 breaker 进展感知决定（持续有实质进展则继续，无进展超宽限期才退出；时间维度由 breaker 时间熔断兜底）。
 2. **stop 信号检查**（每步开始前，子进程模式）。
 3. **巡查发起**（异步事件驱动）：`should_check` 达巡查时机 → `fire_async_analysis` 后台线程分析（不阻塞）。
 4. **巡查事件召回**：`consume_pending_guidance` 消费已完成分析 → `_apply_coordinator_guidance` 注入。
@@ -725,7 +725,7 @@ Sprint 32.4c：巡查器用后续轨迹验证自己之前的判断：
 8. **注入巡查指导**（`_coordinator_guidance`）：MUST 持久注入（`_must_repeat_left` 连续重复强调）+ 强制跳转（连续 ≥2 步仍执行与 MUST 相悖动作 → `[强制跳转]` 阻断）+ 灵感板（创新风格）+ 战略方向 + 来源步声明（避免过时信息误导）。
 9. **消息总线兄弟发现**（每 5 步）：`check_sanitized` 拉取消毒后的兄弟发现注入 prompt；同时注入协作义务提示（要求发布可复用关键线索）。
 10. **强制回答检查**（每 5 步）：检测来自兄弟且本 agent 尚未回答的提问，强制回答（即使"不知道"），防止提问方卡死等待。
-11. **动态知识注入**（每 8 步，step ≥8）：Skill 库 mid-solve 动态注入 + 经验库动态注入（10 步冷却）+ RAG 延迟注入（Sprint 36.2 改为侦查后基于实际观测检索，防题目混淆）。
+11. **动态知识注入**（每 8 步，step ≥8）：Skill 库 mid-solve 动态注入 + 经验库动态注入（10 步冷却）+ RAG 延迟注入（改为侦查后基于实际观测检索，防题目混淆）。
 12. **LLM 推理**（异常容错：重试 → 降级 pro → 注入提示跳过本步继续）。
 13. **解析**（`parse_llm_output`）→ Final Answer 提交流程 / 格式错误处理 / 工具调用。
 14. **禁忌拦截**（工具执行前 `intercept_forbidden`）。
@@ -738,14 +738,14 @@ WING-Corvus 强化了 LLM 输出解析的鲁棒性（基于 linx/threshold 复�
 - **配平花括号 JSON 提取**（`_extract_balanced_json`）：状态机扫描首个 `{` 起，跳过字符串内 `{}/转义引号` 与嵌套 `{}`，提取配平完整的 JSON 对象——修复 LLM 在 JSON 后直接跟含 `{}` 解释文本时（如 `Action Input: {"file": "/tmp/x"} 文件内容包含 {"flag": "..."}`）旧"首{到末"截取把文本包进 JSON 的解析失败。
 - **action_input 鲁棒清洗**（`_clean_action_input`）：配平提取 + 尾逗号容错 + 单引号→双引号兜底。
 - **Markdown 装饰剥离**：Action 字段 `**Action:** ssh_exec` 等装饰剥离（`_strip_markdown_artifacts`）；Action Input 前后 `**` 剥离（`_strip_code_fence`）。
-- **Action Input 别名**：Input/Args/Arguments/Parameters/Params/参数 等前缀（Sprint 20）。
+- **Action Input 别名**：Input/Args/Arguments/Parameters/Params/参数 等前缀。
 - **Action 缺 Input 回退**：漏写 "Action Input:" 前缀时从 Action 行后配平提取首个 JSON 对象。
 - **Thought 回退**：LLM 省略 "Thought:" 前缀时取 "Action:" 前的文本作为 thought。
-- **格式错误容错**：`max_format_errors=5`（Sprint 36 从 3 放宽——并发多 agent 抢 LLM API 时输出质量波动，3 次易误杀深入思考中的 agent）；空输出 2 次免费重答（注入恢复 hint），超过才计入 format_errors。
+- **格式错误容错**：`max_format_errors=5`（从 3 放宽——并发多 agent 抢 LLM API 时输出质量波动，3 次易误杀深入思考中的 agent）；空输出 2 次免费重答（注入恢复 hint），超过才计入 format_errors。
 
 ### 6.5 提交流程与反幻觉兜底
 
-Final Answer 后的提交流程（Sprint 26 多次提交机制）：
+Final Answer 后的提交流程（多次提交机制）：
 
 1. **反幻觉兜底**：无任何有效工具调用直接 Final = 幻觉（拒绝并注入 hint 让 LLM 先收集信息，所有题型强制 ≥1 次工具调用）。
 2. **去重检查**：已提交过的答案直接驳回。
@@ -755,7 +755,7 @@ Final Answer 后的提交流程（Sprint 26 多次提交机制）：
 
 ### 6.6 思考强度注入（_thinking_extra）
 
-Sprint 26 按难度+题型选择 reasoning_effort（仅 `ENABLE_THINKING_MODE=true` 时生效），优先级：
+按难度+题型选择 reasoning_effort（仅 `ENABLE_THINKING_MODE=true` 时生效），优先级：
 
 1. `force_max_thinking=True`（重试场景）→ max；
 2. hard/extreme → max（thinking_effort_hard / thinking_effort_extreme）；
@@ -819,7 +819,7 @@ Sprint 26 按难度+题型选择 reasoning_effort（仅 `ENABLE_THINKING_MODE=tr
 - 难度 → 并发度策略（easy 单路 / medium/hard 三风格并行；SWARM_ENABLED=true 时全部三路）；
 - 共享同一 `verify_flag` 回调（平台/确证性校验，不是防幻觉——防幻觉由 react.py 内部兜底）。
 
-### 7.2 总指挥生命周期（Sprint 36 新增）
+### 7.2 总指挥生命周期（新增）
 
 #### 7.2.1 开关与降级
 
@@ -870,7 +870,7 @@ while not stop_event.is_set():
 - 指令日志：`指令[优先级] 风格(任务N): 方向 — 依据: reason`；
 - 异常捕获不中断轮询。
 
-#### 7.2.5 线程 join 与进程清理（Sprint 36 修复）
+#### 7.2.5 线程 join 与进程清理（修复）
 
 - **join 必须所有线程共享同一 deadline 并行等待**：旧实现逐个 join(timeout) 累计等待（3 路 × 540s = 1620s，子进程早该被 kill 却拖到 N×timeout 才返回"未及时 kill"）。
 - 到点 kill 进程树：`_kill_tree` Windows 用 `taskkill /F /T` 杀主进程+子孙进程（单用 proc.kill() 只杀 python 主进程，其 spawn 的 docker exec/ssh 孙进程残留，stdout 不关闭，readline 阻塞导致线程不结束）。
@@ -882,7 +882,7 @@ while not stop_event.is_set():
 
 ### 8.1 背景
 
-Sprint 36.2（hard5 复盘）：agent 在 web 题中通过 GitHub API 抓取官方 writeup.md 获得 flag 并直接提交，轨迹看起来"有工具调用"但 flag 来源是非正常解题渠道（外部题解），现有"至少 1 次工具调用"反幻觉兜底无法拦截。
+（hard5 复盘）：agent 在 web 题中通过 GitHub API 抓取官方 writeup.md 获得 flag 并直接提交，轨迹看起来"有工具调用"但 flag 来源是非正常解题渠道（外部题解），现有"至少 1 次工具调用"反幻觉兜底无法拦截。
 
 ### 8.2 设计：两次验证，均通过才放行提交
 
@@ -960,7 +960,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 
 **完成门槛（任务驱动 + 进度汇报驱动，非步数硬门槛）**：三路**全部**完成侦查并提交报告（recon_done，战略层 LLM 判断该路基础侦查已覆盖题目全貌）后，总指挥才整合所有信息生成**全局情报摘要**并确定**主方向**，正式进入 P2。
 
-**P1 期间不确认主方向**（避免过早锁定方向，nss_2800 教训：三路全扎堆 basename 绕过）。
+**P1 期间不确认主方向**（避免过早锁定方向，历史教训：三路全扎堆 basename 绕过）。
 
 ### 9.3 P2 漏洞识别与方向确认
 
@@ -1022,7 +1022,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 | P3→P2 | ≥2 路失败且无 FACT 成功 | 回退优先于前进；重新确认方向 |
 | P4→P3 | 提交验证失败 | 外部反馈触发 |
 
-> Sprint 36.2 校准说明：阶段切换**判定基于规则（客观汇报信号）**——进度/验证信号是客观事实，规则判定不会误判；LLM 只负责切换前后的**任务描述生成**（P1 摘要、P2 分工、P3 分工、确凿分析）。LLM 失败 → 保持当前阶段静默或走降级路径，不阻塞推进。
+> 校准说明：阶段切换**判定基于规则（客观汇报信号）**——进度/验证信号是客观事实，规则判定不会误判；LLM 只负责切换前后的**任务描述生成**（P1 摘要、P2 分工、P3 分工、确凿分析）。LLM 失败 → 保持当前阶段静默或走降级路径，不阻塞推进。
 
 ### 9.7 回退机制与任务重置
 
@@ -1039,9 +1039,9 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 | P3 | dead_end（漏洞不存在信号）/ clue（flag 候选） | P3 分工（附已验证方向）/ 引导为主（转向类 MUST 降级 SHOULD） |
 | P4 | clue（flag 候选） | P4 验证提示（保守型验证） |
 
-### 9.9 阶段协调实际运行示例（基于 nss_2800 复盘场景）
+### 9.9 阶段协调实际运行示例（基于历史复盘场景）
 
-以下用 EasyP（nss_2800）题演示多阶段协调如何避免复盘中的五类问题：
+以下用 EasyP 题演示多阶段协调如何避免复盘中的五类问题：
 
 | 复盘问题 | 旧雁阵行为 | WING-Corvus 多阶段协调行为 |
 |----------|-----------|---------------------------|
@@ -1057,7 +1057,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 |------|----------|
 | 消除路径趋同 | 3 路主题重叠率 ↓（目标：无 2 路同时深挖同一子方向） |
 | 提高 hard 题成功率 | hard 题解题率 ↑（当前 0% 部分 → 目标 ≥30%） |
-| 降低无效步数 | 平均步数 ↓（nss_2800 用 30 步空转 → 目标 ≤15 步无效步） |
+| 降低无效步数 | 平均步数 ↓（历史复盘用 30 步空转 → 目标 ≤15 步无效步） |
 | 创新价值释放 | 新增有效线索数 ↑（每题 ≥1 条兄弟可复用线索） |
 | 卡住快速自救 | 单路卡死时间 ↓ |
 
@@ -1088,7 +1088,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 
 **指令下发（post_directives）**：带 priority（MUST/SHOULD）与 phase 阶段标记。价值：指令分级明确强制力，阶段随指令下发供战略层感知。
 
-**多阶段状态机（_phase_advance_rule）**：P1→P2→P3→P4 规则驱动切换（三路全部 recon_done / verified + 确凿分析 / flag 候选），含 P3→P2 回退。价值：**解决 nss_2800 "方向错误后无回退机制，持续空转到超时"问题**。
+**多阶段状态机（_phase_advance_rule）**：P1→P2→P3→P4 规则驱动切换（三路全部 recon_done / verified + 确凿分析 / flag 候选），含 P3→P2 回退。价值：**解决 "方向错误后无回退机制，持续空转到超时"问题**。
 
 **主方向与备选方向管理（_update_directions_from_llm）**：主方向修改仅两种途径（保守/激进证伪；创新经允许深入证实），P1 期间不确认主方向。价值：防止过早锁定方向 + 防止主方向随意漂移。
 
@@ -1098,7 +1098,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 
 **规则检测降级为 LLM 参考信号**：趋同（Jaccard 重叠 ≥0.4）/ 卡住（主题相同+连续失败 ≥3）检测结果注入 analyze prompt 由 LLM 判断是否干预；P3 阶段不注入卡住/趋同信号。价值：**避免死板代码误判**（如把系统性验证误判为死循环），同时保留规则层的客观事实感知。
 
-**MUST 依据门槛**：无 reason 的 MUST 自动降级 SHOULD。价值：**解决 nss_2800 "MUST 误判"问题**（总指挥 MUST"直接请求 /utils.php"但该路径已被证实空/404）。
+**MUST 依据门槛**：无 reason 的 MUST 自动降级 SHOULD。价值：**解决 "MUST 误判"问题**（总指挥 MUST"直接请求 /utils.php"但该路径已被证实空/404）。
 
 **P3 转向类 MUST 降级**：P3 阶段所有非"返回P2"的 MUST 降级 SHOULD。价值：落实"P3 协调以引导为主，方向调整由战略层负责"。
 
@@ -1112,7 +1112,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 
 **P1 每 5 步进度汇报（report_p1_progress_if_due）**：主循环调用，内容自动提取（发现/计划/是否卡死）。价值：**任务驱动 + 进度汇报驱动**的监控侧——总指挥可判断某路是否卡死并及时介入。
 
-**指令消费 + MUST 本地冲突校验（check_commander_directives）**：每步检查，MUST 与本地已验证死路冲突时降级 SHOULD + 事后回报。价值：**解决 nss_2800 "战略层照单全收总指挥 MUST"问题**——本地证据优先，总指挥不强制执行已证伪方向。
+**指令消费 + MUST 本地冲突校验（check_commander_directives）**：每步检查，MUST 与本地已验证死路冲突时降级 SHOULD + 事后回报。价值：**解决 "战略层照单全收总指挥 MUST"问题**——本地证据优先，总指挥不强制执行已证伪方向。
 
 **阶段感知（_phase_task_block）**：按阶段注入不同巡查任务（P1 侦查完整性 / P2 主方向小方向调控 / P3 死循环与方向调整 / P4 flag 验证）。价值：战略层的巡查侧重随阶段变化，职责精准匹配。**修复了该方法"从未定义导致 P1 阶段巡查每次抛 AttributeError 降级为不干预"的 bug**。
 
@@ -1157,7 +1157,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 | coordinator.py | RAG/Skill 匹配文本从 task_desc 改为轨迹观测 | 修复题目混淆（ouroboros 匹配到 MPEG 题）；经验匹配在侦查产生观测后进行 |
 | react.py | RAG 延迟到侦查阶段后基于实际观测注入 | 取代任务开始时基于 task 描述的静态匹配（防题目混淆根因） |
 | routed.py | go 端点 reasoning_effort 强制 none | 修复 go 端点思考链无界生成撞满 max_tokens（9 组受控实验定论） |
-| routed.py | LLM_PROVIDER=go 只走 go 套餐，禁系统代理直连 | 国内部署直连快且稳定（#2664 复盘：走代理每步 LLM 卡 90s+） |
+| routed.py | LLM_PROVIDER=go 只走 go 套餐，禁系统代理直连 | 国内部署直连快且稳定（历史复盘：走代理每步 LLM 卡 90s+） |
 
 ### 10.9 演进验证与验收清单
 
@@ -1169,7 +1169,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 | 领题分工 | prompt 解析单测 | assignments 覆盖全部风格、每路一个、task_no 从 1 开始 |
 | P1 汇总 | prompt 解析单测 | 输出 summary/main_direction/alt_directions 字段 |
 | P2 校验 | prompt 解析单测 | 输出 confirmed/direction_summary/reasoning 字段 |
-| 回归验证 | 重跑 nss_2800 (EasyP) | 对比阶段分配日志：应看到 P1→P2→P3 切换 + 创新型被强制发散 |
+| 回归验证 | 重跑历史复盘 (EasyP) | 对比阶段分配日志：应看到 P1→P2→P3 切换 + 创新型被强制发散 |
 | Benchmark | 选取 2-3 道 hard 题（含之前失败的 Skip32） | 对比解题率/时间有明显改善 |
 | 总指挥降级 | 关闭 LLM / 移除 bus_dir | 自动降级回雁阵，三路照常求解，行为不变 |
 
@@ -1242,7 +1242,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 | 长期记忆 | `LongTermMemory`（chroma 向量库） | 跨题 | RAG 检索历史 writeup（去标识化沉淀） |
 | Skill 库 | `SkillLibrary` + 经验库 | 跨题 | 可复用解题套路（持续学习积累） |
 
-### 12.2 RAG 检索策略（Sprint 36.2 校准）
+### 12.2 RAG 检索策略（校准）
 
 **延迟注入**：RAG（历史 writeup）不再在任务开始时基于 task 描述（极简题面）静态匹配——题面仅含 flag 格式+地址时，静态匹配会命中无关套路（题目混淆根因，如 ouroboros 匹配到 MPEG 题）。改为**侦查阶段后**（step_no ≥8，每 8 步）基于**轨迹实际观测**（最近 6 步 observation 累积）检索注入：
 
@@ -1258,11 +1258,11 @@ rag_hint = retriever.retrieve(obs_text)   # 注入 "[历史经验参考] ...(仅
 
 - **Skill 库**（`SkillLibrary`，持续学习）：解题时注入相关技能；每 8 步基于累积 observation mid-solve 动态注入（`format_for_mid_solve`）。
 - **经验库**（skill_library.json，抽象解题方法 + 禁忌）：mid-solve 动态注入（10 步冷却，去重）；巡查器基于 recon_steps 判断方向、基于 notes（禁忌）纠正错误；confidence 规则：仅 high 经验可触发 [MUST] 纠正，medium/low 仅作参考。
-- **Sprint 36.2**：解题前静态注入默认关闭（题目混淆根因）；所有经验延后到侦查阶段完成后基于实际观测做 mid-solve 动态注入。
+- ****：解题前静态注入默认关闭（题目混淆根因）；所有经验延后到侦查阶段完成后基于实际观测做 mid-solve 动态注入。
 
 ### 12.4 失败轨迹缓存与演化反思
 
-`FailedTrajectoryCache`（Sprint 10）：
+`FailedTrajectoryCache`：
 
 - 失败时自动存储 trajectory + 自动触发 `reflect()` 生成反思；
 - 下次跑同 challenge_id 时注入失败历史提示 + 反思提示 + (type, difficulty) 级通用提示；
@@ -1278,7 +1278,7 @@ rag_hint = retriever.retrieve(obs_text)   # 注入 "[历史经验参考] ...(仅
 
 ### 13.2 配平花括号 JSON 解析（_extract_balanced_json / _robust_json_loads）
 
-Sprint 36 核心修复：状态机扫描首个 `{` 起，跳过字符串内 `{}/转义引号` 与嵌套 `{}`，提取配平完整的 JSON 对象。`_robust_json_loads` 逐级降级：① 原样/修复尾随逗号 → ② 配平花括号提取 → ③ 去 markdown 装饰。
+核心修复：状态机扫描首个 `{` 起，跳过字符串内 `{}/转义引号` 与嵌套 `{}`，提取配平完整的 JSON 对象。`_robust_json_loads` 逐级降级：① 原样/修复尾随逗号 → ② 配平花括号提取 → ③ 去 markdown 装饰。
 
 ### 13.3 工具清单（按题型划分）
 
@@ -1314,7 +1314,7 @@ zen(免费 flash-free) → go(付费 flash, 无峰谷) → 官方 flash → pro(
 
 WING-Goose（2026-08）起 `LLM_PROVIDER=go`（默认）时：**只走 go 套餐，go 失败直接抛错（禁用官方/pro 降级链）**——go 国内部署直连，领题前冒烟已保证 ≤10s 响应；`LLM_PROVIDER=auto` 保留 zen→go→官方→pro 三级降级（调试期）。
 
-### 14.2 动态 provider 健康状态（Sprint 32.8）
+### 14.2 动态 provider 健康状态
 
 冒烟测试标记不是"终身制"：中途 API 故障（限流/挂起）时实时降级，恢复后自动重新尝试。
 
@@ -1327,20 +1327,20 @@ WING-Goose（2026-08）起 `LLM_PROVIDER=go`（默认）时：**只走 go 套餐
 
 | 层级 | 值 | 目的 |
 |------|-----|------|
-| zen 客户端级超时 | 45s（Sprint 19 v5: httpx.Timeout 防卡死） | 避免误杀正常请求 |
+| zen 客户端级超时 | 45s（v5: httpx.Timeout 防卡死） | 避免误杀正常请求 |
 | go 客户端级超时 | 90s（45→90: thinking 长推理常超 45s，45s 硬超时触发 3 轮重试链白扔 ~139s） | 长思考一次成功 |
 | fallback 客户端级超时 | 30s（60→30: 加速半死连接暴露） | 配合 no_progress 兜底 |
 | wall-clock 总超时 | 45s 通用 / go 90s | **慢速流（slow-drip streaming）绕过 httpx read timeout，ssl.read 无限阻塞**——daemon 线程 + join(timeout) 应用层总超时，超时即放弃该请求 |
-| 系统代理 | `proxy=None, trust_env=False`（全部 client） | 国内部署模型必须直连（禁系统代理），走代理绕境外 IP 导致请求慢/超时（#2664 复盘：每步 LLM 卡 90s+） |
+| 系统代理 | `proxy=None, trust_env=False`（全部 client） | 国内部署模型必须直连（禁系统代理），走代理绕境外 IP 导致请求慢/超时（历史复盘：每步 LLM 卡 90s+） |
 
-### 14.4 思考模式注入（Sprint 26）
+### 14.4 思考模式注入
 
 `enable_thinking_mode=true`（默认）时按难度注入 reasoning_effort（high/max）：
 
 - **LLM_PROVIDER=go**：`reasoning_effort="none"`（强制）——go 端点为 Agent 类请求，思考链强制无界生成，非 none 的 effort 一律撞满 max_tokens（74-86s/次, content=0），唯一可控档 = none（推理由 ReAct Thought 承担）；
 - **非 go 提供方**：按 `_thinking_extra` 优先级注入 effort + `extra_body={"thinking": {"type": "enabled"}}`。
 
-### 14.5 冒烟测试（Sprint 32.5）
+### 14.5 冒烟测试
 
 - `smoke_test(timeout=10s)`：冲榜场景下 LLM API 不可用时，与其让每次调用等 45s*3 超时重试，不如启动前/领题前快速探测，只调用可用的 provider；
 - `apply_smoke_results` / `apply_smoke_from_file`：应用冒烟标记（agent 子进程启动时从 `data/api_smoke.json` 读取）；
@@ -1363,7 +1363,7 @@ WING-Goose（2026-08）起 `LLM_PROVIDER=go`（默认）时：**只走 go 套餐
 | 时间限制 | 单任务 >30 分钟（MAX_TASK_TIME=1800） | 终止 |
 | 重复动作 | 同一 (action, action_input) 重复 >3 次 | 注入"切换策略"提示 |
 | 思维死锁 | LLM 连续 5 轮输出相同 Thought | 注入"跳出循环"提示 |
-| 步数限制 | ReAct 循环步数 > 阈值（MAX_STEPS=80，Sprint 17 从 50 上调） | 终止 |
+| 步数限制 | ReAct 循环步数 > 阈值（MAX_STEPS=80，从 50 上调） | 终止 |
 | 成本限制 | API 累计消耗 > $1.5（MAX_COST_LIMIT） | 终止 |
 | 文件膨胀 | SSH 工作目录 > 1GB | 注入"清理临时文件"提示 |
 
@@ -1399,7 +1399,7 @@ WING-Goose（2026-08）起 `LLM_PROVIDER=go`（默认）时：**只走 go 套餐
 
 - 解题成功 → `ingest_solution` 去标识化写入长期记忆（LTM）→ RAG 后续同类题开局可检索到"自己解过的题"（flag 已隐去）；
 - Skill 库 `prune()` 自我迭代：控制规模，避免臃肿；
-- 失败 → 失败轨迹缓存 + 演化反思（Sprint 10）。
+- 失败 → 失败轨迹缓存 + 演化反思。
 
 ---
 
@@ -1445,8 +1445,8 @@ WING-Corvus/
 每 challenge 一个 `<challenge_id>.jsonl`，三类消息同空间 seq 递增：
 
 ```json
-{"ts": 1754352000.0, "agent": "conservative", "task_id": "nss_2800", "content": "...", "kind": "report", "report_type": "clue", "level": "FACT", "task_no": 1, "seq": 3}
-{"ts": 1754352005.0, "agent": "aggressive", "task_id": "nss_2800", "content": "...", "kind": "directive", "priority": "SHOULD", "task_no": 2, "reason": "...", "phase": "P2", "seq": 4}
+{"ts": 1754352000.0, "agent": "conservative", "task_id": "task_001", "content": "...", "kind": "report", "report_type": "clue", "level": "FACT", "task_no": 1, "seq": 3}
+{"ts": 1754352005.0, "agent": "aggressive", "task_id": "task_001", "content": "...", "kind": "directive", "priority": "SHOULD", "task_no": 2, "reason": "...", "phase": "P2", "seq": 4}
 ```
 
 ### 17.3 solve.py 子进程协议（JSONL）
@@ -1454,7 +1454,7 @@ WING-Corvus/
 - **输入**：task JSON 文件（challenge_id/title/desc/type/difficulty/max_steps/max_seconds/max_submissions/style/bus_dir/bus_challenge_id/commander_enabled 等）。
 - **输出（stdout JSONL）**：`start` / `log` / `step` / `heartbeat`（每 15s）/ `coordinator`（巡查详情）/ `submission` / `result`。
 - **输入（stdin JSONL）**：`{"correct":bool,"feedback":...}`（submission 响应）/ `{"control":"stop"}`。
-- 协议版本 1.1；stdin 统一分发器（Sprint 30）避免 stop-listener 和 submission-handler 竞争 stdin（同时解决 Windows selectors 不能注册 stdin 的问题）。
+- 协议版本 1.1；stdin 统一分发器避免 stop-listener 和 submission-handler 竞争 stdin（同时解决 Windows selectors 不能注册 stdin 的问题）。
 
 ### 17.4 状态数据
 
@@ -1571,7 +1571,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 | `PLANNER_MODEL` | `gpt-4o` | Planner 拆解模型 |
 | `EXECUTOR_MODEL` | `deepseek-chat` | 执行模型 |
 
-#### 模型路由（Sprint 33: opencode zen/go + 官方 flash）
+#### 模型路由（opencode zen/go + 官方 flash）
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
@@ -1582,7 +1582,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 | `LLM_MAX_RETRIES` | 2 | 每次 provider 失败后重试次数 |
 | `LLM_PROVIDER` | `go` | **模型路由模式**：`go`=只走 go 套餐（国内部署直连快、冲榜稳定）；`auto`=zen→go→官方→pro 三级降级（调试期保留） |
 
-#### 思考模式（Sprint 26）
+#### 思考模式
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
@@ -1595,7 +1595,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `KALI_ENABLED` | `false` | Kali 路由开关（默认 false = 关闭 Kali 路由，执行层只用 Docker） |
-| `KALI_HOST` / `KALI_PORT` / `KALI_USER` | 192.168.100.2 / 22 / root | Kali 连接信息 |
+| `KALI_HOST` / `KALI_PORT` / `KALI_USER` | <kali-host> / 22 / root | Kali 连接信息 |
 | `KALI_PASS` / `KALI_KEY_PATH` | 空 | 密码或 SSH Key 路径（Key 优先） |
 
 #### Docker 工具链（WING-Goose Item 5）
@@ -1617,7 +1617,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `SWARM_ENABLED` | `true` | 默认开启多解题器：所有难度（含 easy）都走 3 风格并行 swarm（NSSCTF 难度评判不标准）；false → 回退 T3 结论（仅 medium/hard 并行，easy 单路） |
+| `SWARM_ENABLED` | `true` | 默认开启多解题器：所有难度（含 easy）都走 3 风格并行 swarm（NSSCTF 难度评判不标准）；false → 回退早期结论（仅 medium/hard 并行，easy 单路） |
 | **`SWARM_COMMANDER_ENABLED`** | **`false`** | **总指挥（Commander）开关——三层协作小队。默认 false = 纯雁阵行为不变（升级验证期间）；开启后 swarm 启动总指挥实例：领题分工 → 战略层汇报 → 全局重定向。LLM 不可用/领题失败自动降级回雁阵** |
 
 #### 巡查指导器
@@ -1630,7 +1630,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `MAX_STEPS` | 80 | ReAct 步数硬上限（Sprint 17 从 50 上调；实际由 AdaptiveBreaker 按难度动态调整 + 进展感知软截断） |
+| `MAX_STEPS` | 80 | ReAct 步数硬上限（从 50 上调；实际由 AdaptiveBreaker 按难度动态调整 + 进展感知软截断） |
 | `MAX_TASK_TIME` | 1800 | 单任务最大时长（秒） |
 | `MAX_COST_LIMIT` | 1.5 | 单任务 API 成本上限（美元） |
 
@@ -1669,7 +1669,7 @@ task JSON 示例：
 
 ```json
 {
-  "challenge_id": "nss_2314",
+  "challenge_id": "challenge_001",
   "title": "题目名",
   "desc": "任务描述 (题面+附件路径+靶机URL+规则)",
   "type": "web",
@@ -1679,7 +1679,7 @@ task JSON 示例：
   "max_submissions": 3,
   "style": "conservative",
   "bus_dir": "data/bus",
-  "bus_challenge_id": "nss_2314",
+  "bus_challenge_id": "challenge_001",
   "commander_enabled": true,
   "annex_dir": "path/to/annex"
 }
@@ -2034,10 +2034,10 @@ Get-Content data/bus/<challenge_id>.jsonl
 | `docs/WING_GOOSE_UPGRADE_PLAN.md` | WING-Goose 升级方案（swarm/总线/复盘/docker 链） |
 | `docs/阶段式协调.md` | 多阶段协调设计（P1-P4 定义） |
 | `docs/总指挥多阶段升级方案.md` | 总指挥多阶段升级方案（WING-Corvus 2.0） |
-| `docs/sprint36_commander_design.md` | Sprint 36 总指挥设计 |
+| `docs/sprint36_commander_design.md` | 总指挥设计 |
 | `docs/DOCKER_SANDBOX_DESIGN.md` | Docker 沙箱设计 |
 | `docs/NSS_RUNNER_GUIDE.md` | NSS Runner 指南 |
 
 ### 22.5 文档说明
 
-本文档基于 WING-Corvus（Sprint 36.2）源码逐行审计编写，覆盖全部新增能力（总指挥、战略层协作、多阶段协调、Flag 验证、总线协议、解析容错等）及相对 WING-Goose 的版本演进。如源码后续更新，请以代码为准并同步本文档。
+本文档基于 WING-Corvus 源码逐行审计编写，覆盖全部新增能力（总指挥、战略层协作、多阶段协调、Flag 验证、总线协议、解析容错等）及相对 WING-Goose 的版本演进。如源码后续更新，请以代码为准并同步本文档。

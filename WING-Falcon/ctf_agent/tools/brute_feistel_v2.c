@@ -1,4 +1,4 @@
-// Sprint 15 P0 - brute_feistel v2: 只验证 c1, 输出所有候选 key
+// - brute_feistel v2: 只验证 c1, 输出所有候选 key
 // 然后用 Python 在候选中找满足 c2 的
 // 优化: 不要 early skip, 直接输出所有可能的 key (c1 match)
 #include <stdio.h>

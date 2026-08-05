@@ -16,3 +16,6 @@ data/skills/*.md
 data/ctf.db
 data/*.db
 *.log
+
+# 靶场运行时状态（含 flag/端口，严禁入库）
+**/.range_state.json

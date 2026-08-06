@@ -91,7 +91,12 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 
 def _section_by_phase(md_text: str, phase: str) -> str:
-    """从 role_guides MD 中按 ## P1~P4 提取对应段落 (+ 前言)."""
+    """从 role_guides MD 中按 ## P1~P4 提取对应段落 (只取当前阶段, 不含前言).
+
+    用户规则: "按对应阶段注入压缩上下文同时避免分心" — 只注入当前阶段段落,
+    不携带维护规则/其他阶段内容; 保留阶段标题行供 LLM 识别阶段.
+    无分阶段标题时回退取开头 (兼容未分阶段的历史文件).
+    """
     if not md_text:
         return ""
     lines = md_text.splitlines()
@@ -105,14 +110,12 @@ def _section_by_phase(md_text: str, phase: str) -> str:
             header_idx.append((f"## {m.group(1)}", i))
     if not header_idx:
         return md_text[:2000]
-    # 前言 = 首个阶段标题前的内容
-    preamble = "\n".join(lines[: header_idx[0][1]]).strip()
-    selected: list[str] = [preamble] if preamble else []
+    # 只返回目标阶段段落 (含标题行), 不注入前言
     for pos, (h, i) in enumerate(header_idx):
         if h == f"## {phase}":
             end = header_idx[pos + 1][1] if pos + 1 < len(header_idx) else len(lines)
-            selected.append("\n".join(lines[i:end]).strip())
-    return "\n\n".join(x for x in selected if x)
+            return "\n".join(lines[i:end]).strip()
+    return ""
 
 
 class KnowledgeBase:

@@ -13,6 +13,13 @@ dist/
 data/chroma/*
 !data/chroma/.gitkeep
 data/skills/*.md
+# 运行时知识积累（curator 维护，禁止公开；预置的 packages/ 与 role_guides/ 入库）
+data/knowledge/patterns/
+data/knowledge/playbooks/
+data/knowledge/pitfalls/
+data/knowledge/traces/
+data/knowledge/archived/
+data/knowledge/curator_log.jsonl
 data/ctf.db
 data/*.db
 *.log

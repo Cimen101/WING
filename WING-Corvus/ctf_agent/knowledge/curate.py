@@ -173,6 +173,153 @@ def _build_playbook(steps: list[dict], tool_chain: list[str], obs: list[str]) ->
     return "\n".join(lines)
 
 
+# ============ Sprint 36.5: LLM 分阶段提炼 (用户规则: 独立 LLM 分析整理) ============
+
+def _step_phase(s: dict) -> str:
+    """按工具/观测特征给单步定阶段 (粗略分组, 供 LLM 提炼时参考).
+
+    P4 = flag/提交; P3 = 攻击/求解类工具; 其余 (侦查/分析/协作) = P1.
+    不细分 P2 — 阶段语义由 LLM 从事件内容推断.
+    """
+    a = (s.get("action") or "").lower()
+    obs = (s.get("observation") or "").lower()
+    if s.get("is_final") or (s.get("final_answer") or "").strip() or \
+       "flag{" in obs or "nssctf{" in obs or "moectf{" in obs:
+        return "P4"
+    if any(k in a for k in ("exploit", "payload", "pwntools", "angr", "z3",
+                            "lwe_decode", "crypto_rsa", "feistel_decrypt",
+                            "ecdsa_nonce", "des_cryptanalysis", "binary_analyze")):
+        return "P3"
+    return "P1"
+
+
+def _phase_events(steps: list[dict], limit_per_phase: int = 3) -> list[tuple[str, str]]:
+    """把轨迹转成 (阶段, 事件摘要) 序列 (每阶段最多 limit_per_phase 条)."""
+    by_phase: dict[str, list[str]] = {}
+    for s in steps:
+        p = _step_phase(s)
+        a = (s.get("action") or "").strip() or "?"
+        thought = sanitize(str(s.get("thought") or "").replace("\n", " ")[:120])
+        by_phase.setdefault(p, []).append(f"[{a}] {thought}" if thought else f"[{a}]")
+    out: list[tuple[str, str]] = []
+    for p in ("P1", "P2", "P3", "P4"):
+        for ev in by_phase.get(p, [])[:limit_per_phase]:
+            out.append((p, ev))
+    return out
+
+
+_REFINE_PROMPT = """你是 CTF 解题轨迹分析师。把下面的解题轨迹提炼为分阶段知识条目，供未来同类题直接参考。
+
+要求：
+1. 按 **P1 侦查 / P2 漏洞确认 / P3 利用 / P4 验证提交** 分阶段记录（每阶段用 `## P1 侦查` 这类标题）
+2. 每阶段记录：**关键工具链**（实际用过的）、**可参考做法**、**踩过的坑/禁忌**（如反复失败的思路）
+3. 成功轨迹提炼"正向套路"；失败轨迹提炼"避坑要点"（哪些方向无效、为什么）
+4. **脱敏**：严禁出现内部题名/flag/IP/端口/绝对路径/容器名/用户名，一律用占位符（{work_dir}/{address}/{flag}）
+5. 简洁可执行，总长度 ≤2500 字符；只输出 markdown 正文，不要多余说明
+
+轨迹工具链: {tool_chain}
+阶段事件序列:
+{events}
+"""
+
+
+def _llm_refine(
+    steps: list[dict],
+    tool_chain: list[str],
+    ctype: str,
+    verdict: str,
+    llm: Any,
+) -> str:
+    """LLM 分阶段提炼 playbook/pitfall (用户规则: 需要独立 LLM 分析整理).
+
+    无 LLM 时回退到模板拼接 (_build_playbook/_build_pitfall), 保证离线可用.
+    """
+    if llm is None:
+        return ""
+    events = _phase_events(steps)
+    if not events:
+        return ""
+    try:
+        events_text = "\n".join(f"[{p}] {e}" for p, e in events)
+        # 用 replace 而非 format: prompt 内的 {work_dir}/{flag} 等脱敏示例会与 format 花括号冲突
+        sys_prompt = (_REFINE_PROMPT
+                      .replace("{tool_chain}", " -> ".join(tool_chain))
+                      .replace("{events}", events_text))
+        msgs = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": f"题型: {ctype}; 结果: {verdict}\n请输出分阶段知识条目."},
+        ]
+        res = llm.chat(msgs, temperature=0.0, max_tokens=2500)
+        md = str(res.content or "").strip()
+        if len(md) < 50:
+            return ""
+        # 二次脱敏兜底 (LLM 可能漏掉内部信息)
+        return sanitize(md)[:3000]
+    except Exception:  # noqa: BLE001 - LLM 提炼失败回退模板
+        return ""
+
+
+def _update_role_guide(kb: KnowledgeBase, ctype: str, style: str, verdict: str, refined: str) -> bool:
+    """按用户规则更新 role_guides: **只改不增** + 超限压缩.
+
+    - 只修改对应题型 role_guide 文件 (role_guides/{ctype}.md 或 {ctype}-{style}.md)
+    - 成功 → 在对应阶段段落追加经验; 失败 → 追加"禁忌"要点
+    - 文件不存在不创建 (role_guides 由预置初始化, curator 只维护)
+    """
+    name = f"{ctype}-{style}.md" if style else f"{ctype}.md"
+    p = kb.root / "role_guides" / name
+    if not p.exists():
+        return False
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+    # 追加块 (脱敏已在上游完成)
+    tag = "经验" if verdict == "success" else "禁忌"
+    block = f"\n\n<!-- curator 追加 ({tag}) -->\n{refined}"
+    new_text = text + block
+    # 只改不增 + 超限压缩: 超过 4KB 时保留各阶段标题与正文头尾
+    if len(new_text) > 4000:
+        new_text = _compress(new_text, max_chars=4000)
+    try:
+        p.write_text(new_text, encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def _update_patterns(kb: KnowledgeBase, ctype: str, verdict: str, refined: str) -> bool:
+    """成功轨迹 → patterns/skill_library.json (抽象经验, 增强字段)."""
+    if verdict != "success" or not refined:
+        return False
+    p = kb.root / "patterns" / "skill_library.json"
+    lib: dict[str, Any] = {"skills": []}
+    if p.exists():
+        try:
+            lib = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+            if not isinstance(lib, dict):
+                lib = {"skills": []}
+        except Exception:
+            lib = {"skills": []}
+    title = f"{ctype} 解题套路 ({len(lib.get('skills', [])) + 1})"
+    lib.setdefault("skills", []).append({
+        "title": title,
+        "challenge_type": ctype,
+        "vuln_class": "",
+        "trigger": f"遇到 {ctype} 类题且特征匹配时参考",
+        "summary": sanitize(refined[:600]),
+        "body": refined,
+        "source": "skill_curator",
+        "last_verified_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(lib, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
 def _build_pitfall(steps: list[dict], tool_chain: list[str], fail_reason: str, items: list[str]) -> str:
     lines = ["# 避坑 (来自失败轨迹)", f"失败原因: {sanitize(fail_reason)[:200]}"]
     lines.append(f"工具链: {' -> '.join(tool_chain)}")
@@ -235,11 +382,20 @@ def _merge_into_dir(body: str, ctype: str, kind: str, trace_name: str, kb: Knowl
     return target, False
 
 
-def curate_trace(trace_path: Path, kb: KnowledgeBase, log_path: Path) -> dict[str, Any]:
-    """单条轨迹 → 沉淀 playbook/pitfall (try/finally 兜底).
+def _guess_style(trace_name: str) -> str:
+    """从轨迹文件名猜测风格 (xxx_conservative.jsonl → conservative)."""
+    stem = Path(trace_name).stem.lower()
+    for s in ("conservative", "aggressive", "innovative"):
+        if s in stem:
+            return s
+    return ""
 
-    finally 兜底: 无论成功/异常, 都把轨迹引用 + 处理结果写入 curator_log.jsonl,
-    保证"意外退出也整理完才能退出".
+
+def curate_trace(trace_path: Path, kb: KnowledgeBase, log_path: Path, llm: Any = None) -> dict[str, Any]:
+    """单条轨迹 → 沉淀 playbook/pitfall + role_guides + patterns (try/finally 兜底).
+
+    finally 兜底: 无论成功/异常, 都把轨迹引用 + 处理结果写入 curator_log.jsonl;
+    异常时把原始轨迹归档到 traces/ (下次可离线补整理) — 满足"意外退出也整理完才能退出".
     """
     record: dict[str, Any] = {
         "trace": str(trace_path),
@@ -263,28 +419,53 @@ def curate_trace(trace_path: Path, kb: KnowledgeBase, log_path: Path) -> dict[st
         # 2. verdict: 成功/失败
         verdict, fail_reason = _verdict(steps)
         ctype = _guess_ctype(steps)
+        style = _guess_style(trace_path.name)
         record["verdict"] = verdict
         record["ctype"] = ctype
+        record["style"] = style
         record["tool_chain"] = tool_chain
 
-        # 3. refine: 脱敏
-        obs = _key_observations(steps)
-        pitfalls = _pitfall_items(steps) if verdict == "fail" else []
+        # 3. refine: 优先 LLM 分阶段提炼 (用户规则: 独立 LLM 分析整理), 无 LLM 回退模板
+        refined = _llm_refine(steps, tool_chain, ctype, verdict, llm)
+        if not refined:
+            obs = _key_observations(steps)
+            if verdict == "success":
+                refined = _compress(_build_playbook(steps, tool_chain, obs))
+            else:
+                items = _pitfall_items(steps)
+                refined = _compress(_build_pitfall(steps, tool_chain, fail_reason, items))
 
-        # 4+5. merge (目录级查重) + persist
+        # 4. persist: playbook/pitfall (目录级查重合并)
         if verdict == "success":
-            body = _compress(_build_playbook(steps, tool_chain, obs))
-            target, changed = _merge_into_dir(body, ctype, "playbook", trace_path.name, kb)
-            record["output"] = {"kind": "playbook", "path": str(target), "changed": changed}
+            target, changed = _merge_into_dir(refined, ctype, "playbook", trace_path.name, kb)
         else:
-            body = _compress(_build_pitfall(steps, tool_chain, fail_reason, pitfalls))
-            target, changed = _merge_into_dir(body, ctype, "pitfall", trace_path.name, kb)
-            record["output"] = {"kind": "pitfall", "path": str(target), "changed": changed}
+            target, changed = _merge_into_dir(refined, ctype, "pitfall", trace_path.name, kb)
+        record["output"] = {"kind": "playbook" if verdict == "success" else "pitfall",
+                            "path": str(target), "changed": changed}
+
+        # 5. role_guides 更新 (只改不增): 成功→经验, 失败→禁忌
+        rg_changed = _update_role_guide(kb, ctype, style, verdict, refined)
+        record["role_guide_changed"] = rg_changed
+        # 6. patterns 更新 (抽象经验库, 仅成功)
+        pt_changed = _update_patterns(kb, ctype, verdict, refined)
+        record["patterns_changed"] = pt_changed
+
         record["status"] = "done"
         return record
     except Exception as e:  # noqa: BLE001
         record["status"] = "error"
         record["error"] = f"{type(e).__name__}: {e}"
+        # 兜底: 异常时把原始轨迹归档到 traces/ (下次可离线补整理)
+        try:
+            traces_dir = kb.root / "traces"
+            traces_dir.mkdir(parents=True, exist_ok=True)
+            dst = traces_dir / trace_path.name
+            if not dst.exists():
+                dst.write_text(trace_path.read_text(encoding="utf-8", errors="replace"),
+                               encoding="utf-8")
+                record["traces_archived"] = str(dst)
+        except Exception:  # noqa: BLE001
+            pass
         return record
     finally:
         # 兜底落盘: 即使上面 return, finally 也会执行 (记录已完成状态)
@@ -296,7 +477,7 @@ def curate_trace(trace_path: Path, kb: KnowledgeBase, log_path: Path) -> dict[st
             pass
 
 
-def curate_dir(traces_dir: Path, kb_root: Path | None = None) -> int:
+def curate_dir(traces_dir: Path, kb_root: Path | None = None, llm: Any = None) -> int:
     """批量策展一个目录下的所有 jsonl 轨迹."""
     kb = KnowledgeBase(root=kb_root) if kb_root else KnowledgeBase()
     log_path = kb.root / "curator_log.jsonl"
@@ -304,9 +485,9 @@ def curate_dir(traces_dir: Path, kb_root: Path | None = None) -> int:
     if not traces:
         print(f"no jsonl in {traces_dir}")
         return 0
-    done = skipped = errors = playbook = pitfall = 0
+    done = skipped = errors = playbook = pitfall = role_guide = patterns = 0
     for t in traces:
-        rec = curate_trace(t, kb, log_path)
+        rec = curate_trace(t, kb, log_path, llm=llm)
         st = rec["status"]
         if st == "done":
             done += 1
@@ -316,14 +497,21 @@ def curate_dir(traces_dir: Path, kb_root: Path | None = None) -> int:
                 playbook += 1
             else:
                 pitfall += 1
-            print(f"  [{kind:8s}]{'merged' if changed else 'dup' :6s} {t.name} -> {(rec.get('output') or {}).get('path', '')}")
+            if rec.get("role_guide_changed"):
+                role_guide += 1
+            if rec.get("patterns_changed"):
+                patterns += 1
+            print(f"  [{kind:8s}]{'merged' if changed else 'dup' :6s} {t.name} -> {(rec.get('output') or {}).get('path', '')}"
+                  f"{' [role_guide]' if rec.get('role_guide_changed') else ''}"
+                  f"{' [patterns]' if rec.get('patterns_changed') else ''}")
         elif st == "error":
             errors += 1
-            print(f"  [ERROR] {t.name}: {rec.get('error')}")
+            print(f"  [ERROR] {t.name}: {rec.get('error')} {'[traces 已归档]' if rec.get('traces_archived') else ''}")
         else:
             skipped += 1
             print(f"  [skip ] {t.name}: {st}")
-    print(f"curated: done={done} (playbook={playbook}, pitfall={pitfall}) skipped={skipped} errors={errors} log={log_path}")
+    print(f"curated: done={done} (playbook={playbook}, pitfall={pitfall}, role_guide={role_guide}, "
+          f"patterns={patterns}) skipped={skipped} errors={errors} log={log_path}")
     return errors
 
 
@@ -331,8 +519,17 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="skill_curator: 轨迹 → 知识库沉淀")
     ap.add_argument("--traces", required=True, help="轨迹目录 (含 *.jsonl)")
     ap.add_argument("--kb-root", default=None, help="知识库根目录 (默认 data/knowledge)")
+    ap.add_argument("--no-llm", action="store_true", help="不用 LLM 提炼 (模板拼接兜底, 离线更快)")
     args = ap.parse_args()
-    return curate_dir(Path(args.traces), Path(args.kb_root) if args.kb_root else None)
+    llm = None
+    if not args.no_llm:
+        try:
+            from ctf_agent.config import get_settings
+            from ctf_agent.llm import RoutedLLMClient
+            llm = RoutedLLMClient(settings=get_settings())
+        except Exception:  # noqa: BLE001 - 无 LLM 配置时走模板兜底
+            llm = None
+    return curate_dir(Path(args.traces), Path(args.kb_root) if args.kb_root else None, llm=llm)
 
 
 if __name__ == "__main__":

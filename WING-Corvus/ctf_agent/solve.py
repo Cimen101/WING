@@ -734,6 +734,50 @@ def _review(result: ReActResult, task: dict[str, Any], llm: Any) -> None:
         _log("WARN", f"复盘失败: {e}")
 
 
+def _curate(result: ReActResult, task: dict[str, Any], llm: Any) -> None:
+    """Sprint 36.5: 轨迹 → 知识库自动沉淀 (success/fail 都整理).
+
+    与 _learn/_review/ingest_solution 互补: 前两者写 Skill/md 技能库/LTM,
+    这里把轨迹提炼为分阶段 playbook/pitfall + role_guides + patterns.
+    独立 try/except, 失败不影响主流程; curator 内部有 finally 兜底落盘
+    (用户规则: 意外退出也要整理完才能退出).
+    """
+    try:
+        from pathlib import Path as _Path
+        from ctf_agent.knowledge import KnowledgeBase
+        from ctf_agent.knowledge.curate import curate_trace
+
+        steps = []
+        for s in (result.steps or []):
+            d = s.to_dict()
+            d["type"] = "step"
+            steps.append(d)
+        if not steps:
+            return
+        # 写临时轨迹文件 (供 curator 读取)
+        ctype = str(task.get("type") or "misc").lower().strip()
+        style = str(task.get("style") or "").strip()
+        cid = str(task.get("challenge_id") or "auto")
+        trace_dir = _Path("data/knowledge/traces")
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        trace_path = trace_dir / f"{cid}{('_' + style) if style else ''}.jsonl"
+        with open(trace_path, "w", encoding="utf-8") as fh:
+            for d in steps:
+                fh.write(json.dumps(d, ensure_ascii=False) + "\n")
+        kb = KnowledgeBase()
+        log_path = kb.root / "curator_log.jsonl"
+        rec = curate_trace(trace_path, kb, log_path, llm=llm)
+        if rec.get("status") == "done":
+            out = rec.get("output") or {}
+            _log("INFO", f"知识库沉淀: {out.get('kind')} "
+                         f"{'更新' if out.get('changed') else '已存在'} "
+                         f"{out.get('path', '')}"
+                         f"{' + role_guide' if rec.get('role_guide_changed') else ''}"
+                         f"{' + patterns' if rec.get('patterns_changed') else ''}")
+    except Exception as e:  # noqa: BLE001 - 知识库沉淀失败不影响主流程
+        _log("WARN", f"知识库沉淀失败: {e}")
+
+
 def solve_task(task: dict[str, Any]) -> int:
     """执行一次求解 (返回进程退出码)."""
     # Sprint 26: 重置 stop 信号 (新任务开始)
@@ -819,6 +863,9 @@ def solve_task(task: dict[str, Any]) -> int:
                 _log("INFO", f"经验沉淀: 已写入长期记忆 {doc_id} (RAG 自增长)")
         except Exception as e:  # noqa: BLE001 - 经验沉淀失败不影响主流程
             _log("WARN", f"经验沉淀失败: {e}")
+
+    # 知识库沉淀 (curator): 成功/失败都整理 → 分阶段 playbook/pitfall + role_guides + patterns
+    _curate(result, task, getattr(engine, "llm", None))
 
     # 结果
     flag = _extract_flag(result.final_answer or "") if result.success else ""

@@ -1029,14 +1029,15 @@ class ReActEngine:
                 except Exception:  # noqa: BLE001 - 经验库注入失败不阻断
                     pass
 
-            # WING KB: 四层知识库阶段化注入 (Sprint 36.3)
-            # 阶段变化 (P1→P2→P3→P4) 或 step%8==0 时, 按当前阶段注入 role_guide 段落
-            # + playbooks/pitfalls/patterns, 压缩上下文避免分心
-            if self._knowledge_base is not None and step_no % 8 == 0 and step_no >= 8 and len(steps) >= 4:
+            # WING KB: 四层知识库阶段化注入 (Sprint 36.3/36.5)
+            # 开局 (step 1) 注入 P1 段 + 阶段变化 (P1→P2→P3→P4) 时注入对应段落.
+            # role_guide 是题型级指南 (非具体题解, 不构成题目混淆) — 侦查阶段开局即需
+            # P1 指导; 阶段变化时换注入对应段落, 压缩上下文避免分心.
+            if self._knowledge_base is not None and len(steps) >= 1:
                 try:
                     from ctf_agent.knowledge import infer_phase
                     phase = infer_phase(steps, self.max_steps)
-                    if phase != self._kb_injected_phase or step_no not in self._kb_injected_steps:
+                    if phase != self._kb_injected_phase:
                         recent_obs = [task]
                         for s in steps[-6:]:
                             if s.observation:

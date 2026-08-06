@@ -1288,10 +1288,38 @@ rag_hint = retriever.retrieve(obs_text)   # 注入 "[历史经验参考] ...(仅
 
 **验证**：hard 题预测试 84s 一次通过（修复前 713s 失败 + 4M tokens 熔断），零格式错误。
 
-### 12.6 内置知识库（data/knowledge/packages/）
+### 12.6 内置知识库（data/knowledge/）
 
-- WING-Corvus `data/` 内置**外部 CTF 知识包**（按题型分类：crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa），下载即用
-- 运行时自动积累的技能/经验存入本地 `data/`，不进公开仓库
+WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为本地运行时积累（不进公开仓库）：
+
+| 层 | 内容 | 性质 |
+| :-- | :-- | :-- |
+| `packages/` | 外部 CTF 知识包（crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa），SKILL.md 路由 + 主题深挖 | 静态领域知识，只读 |
+| `role_guides/` | 题型分工指南（每题型 1 个：web/pwn/crypto/reverse/misc/forensics/osint；按 P1-P4 分阶段 + 推进标准） | 预置基础版，curator **只改不增**实时维护 |
+| `patterns/` `playbooks/` `pitfalls/` `traces/` | 抽象经验 / 分阶段套路 / 避坑 / 轨迹归档 | **本地运行时积累**，curator 写入，禁止公开 |
+
+- 运行时自动积累的技能/经验存入本地 `data/`，不进公开仓库（.gitignore 已排除）
+
+### 12.7 知识库检索与自学习沉淀（KnowledgeBase + skill_curator）
+
+**统一检索**（`ctf_agent/knowledge/kb.py` 的 `KnowledgeBase.retrieve`）：按 `role`（commander/strategy/tactic）× 题型 × **当前阶段** 组装注入文本：
+
+- **角色化注入**：总指挥领题注入 packages 路由摘要；战略层注入 role_guide 当前阶段段 + patterns；战术层注入 role_guide 当前阶段段 + playbooks + pitfalls + patterns
+- **阶段化注入（只注入当前阶段）**：role_guides 按 `## P1~P4` 分段，`_section_by_phase` 只返回目标阶段段落（不含前言/其他阶段），配合"推进标准"——压缩上下文、避免分心
+- 战术层**开局（step 1）即注入 P1 段**（题型级指南非题解，不构成题目混淆），阶段变化时换注入对应段落
+
+**自学习沉淀**（`ctf_agent/knowledge/curate.py` 的 skill_curator，接入 `solve.py` 每题结束自动执行）：
+
+```
+管线: extract(分阶段事件) → verdict(成功/失败) → LLM refine(分阶段 playbook/pitfall)
+      → merge(目录级查重, 相似则完善不新增) → persist(四层落盘)
+兜底: try/finally — 异常时原始轨迹归档到 traces/, 记录写入 curator_log.jsonl (意外退出也整理完)
+```
+
+- **LLM 分阶段提炼**：独立 LLM 把轨迹提炼为按 P1-P4 组织的 playbook/pitfall（每阶段工具链/可参考做法/禁忌），脱敏后入库；无 LLM 时回退模板拼接
+- **role_guides 只改不增**：成功轨迹 → 对应题型 role_guide 追加"经验"段；失败 → 追加"禁忌"段；超 4KB 自动压缩重写
+- **patterns 增强**：成功轨迹 → 写入 `patterns/skill_library.json`（含 `last_verified_at` 等增强字段）
+- 离线批处理：`python -m ctf_agent.knowledge.curate --traces <dir>`（用历史轨迹补沉淀）
 
 ---
 
@@ -1474,6 +1502,13 @@ WING-Corvus/
 ├── data/
 │   ├── chroma/               # 向量库（RAG）
 │   ├── skills/               # Skill 库（index.json）
+│   ├── knowledge/            # 四层知识库
+│   │   ├── packages/         #   外部知识包（内置，只读）
+│   │   ├── role_guides/      #   题型分工指南（内置基础版，curator 只改不增）
+│   │   ├── patterns/         #   抽象经验（本地积累）
+│   │   ├── playbooks/        #   分阶段套路（本地积累）
+│   │   ├── pitfalls/         #   避坑（本地积累）
+│   │   └── traces/           #   轨迹归档（本地积累）
 │   ├── agent_share/          # 同题共享文件目录
 │   └── swarm_tasks/          # swarm task JSON 临时目录
 ├── main.py                   # CLI 入口
@@ -2125,6 +2160,6 @@ WING-Corvus（渡鸦）── 协作小队（当前最新版）
 | 36.3 | 格式坍塌初修 | observation 截断回灌、reasoning 回退免费重答、最小输出模式升级 |
 | 36.4 | 上下文预算 + 工具强化 | assistant 统一截断回灌、lwe_decode 工具、web_search 合规化、合规搜索规则 |
 | 36.4.2 | 智能上下文压缩 | level 打标 + 实时时间线 + 异步事件驱动动态压缩 + 首次坍塌即压缩 |
-| 36.5 | 学习闭环 + 思路纠偏 | swarm 子进程接入 long_term/mid_term/ingest_solution；LTM embedding 统一 256 维（修复 RAG 静默失效）；压缩器按 step_no 匹配修复裁剪错位；意图级重复检测；交互回显型程序纠偏 + web_search 使用引导 |
+| 36.5 | 学习闭环 + 思路纠偏 | swarm 子进程接入 long_term/mid_term/ingest_solution；LTM embedding 统一 256 维（修复 RAG 静默失效）；压缩器按 step_no 匹配修复裁剪错位；意图级重复检测；交互回显型程序纠偏 + web_search 使用引导；知识库重构：role_guides 全题型分阶段注入（只注入当前阶段）+ skill_curator 接入 solve.py finally（LLM 分阶段提炼 + role_guides/patterns 更新 + traces 归档） |
 
 > 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、13.4 镜像、13.5 LWE 工具、13.6 合规搜索；迭代验证记录见 `dev-notes/`。

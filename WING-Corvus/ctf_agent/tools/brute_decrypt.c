@@ -1,4 +1,4 @@
-// brute_decrypt: 反向暴力 (解密 c0, 找 'athena{' 前缀)
+// Sprint 15 P0 - brute_decrypt: 反向暴力 (解密 c0, 找 'athena{' 前缀)
 // 策略: 对每个 key, decrypt(c0, key) → 检查低 56 位 == LE 'athena{' = 0x007b616e65687461
 // 然后用找到的 key 解密 c1, 拼接得 flag
 //

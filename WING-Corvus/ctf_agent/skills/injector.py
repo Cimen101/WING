@@ -1,4 +1,4 @@
-"""Skill 注入器 ().
+"""Skill 注入器 (Sprint 16 P11-1).
 
 将 Skill 格式化为可注入 ReAct system prompt 的文本.
 
@@ -14,7 +14,7 @@ from ctf_agent.skills.skill import Skill, SkillLevel
 
 
 # 注入模板
-SKILL_INJECTION_HEADER = """# 🧠 积累的解题模式 (Skill 库)
+SKILL_INJECTION_HEADER = """# 🧠 积累的解题模式 (Skill 库, Sprint 16)
 
 **重要**: 以下是从过去成功 trajectory 中抽取的解题模式, 不是具体答案. 
 请根据当前题目的实际情况, **自主决定**使用哪个 Skill 模式, 而**不是机械复制**步骤.

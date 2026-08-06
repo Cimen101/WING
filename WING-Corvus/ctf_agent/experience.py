@@ -1,4 +1,4 @@
-"""经验闭环：把成功解题沉淀为 writeup 写入长期记忆（架构层）.
+"""经验闭环：把成功解题沉淀为 writeup 写入长期记忆（Sprint 16 架构层）.
 
 背景与动机
 ----------
@@ -33,7 +33,7 @@ from ctf_agent.agent import ReActResult
 # 疑似 flag 特征：xxx{...} 包裹格式，以及常见 flag 词
 _FLAG_BRACE = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}]{1,200}\}")
 _LONG_HEX = re.compile(r"\b[0-9a-fA-F]{32,}\b")
-# 绝对路径和内存地址也需脱敏 (与 skill_learner.py 保持一致)
+# Sprint 28: 绝对路径和内存地址也需脱敏 (与 skill_learner.py 保持一致)
 _TMP_PATH = re.compile(r'/tmp/nss_arena/[a-zA-Z0-9_]+(/[^\s]*)?')
 _HEX_ADDR = re.compile(r'0x[0-9a-fA-F]{4,}')
 _OBJDUMP_ADDR = re.compile(r'\b[0-9a-f]{8,16}\b\s*<')
@@ -42,13 +42,13 @@ _OBJDUMP_ADDR = re.compile(r'\b[0-9a-f]{8,16}\b\s*<')
 def redact_flags(text: str, final_answer: str | None = None) -> str:
     """去标识化：移除疑似 flag、绝对路径、内存地址，避免污染 RAG 上下文.
 
-    新增路径和地址脱敏 — 与 skill_learner._sanitize_text 保持一致.
+    Sprint 28: 新增路径和地址脱敏 — 与 skill_learner._sanitize_text 保持一致.
     """
     if not text:
         return text
     out = _FLAG_BRACE.sub("<REDACTED_FLAG>", text)
     out = _LONG_HEX.sub("<REDACTED_HEX>", out)
-    # 路径和地址脱敏
+    # Sprint 28: 路径和地址脱敏
     out = _TMP_PATH.sub("{work_dir}\\1", out)
     out = _HEX_ADDR.sub("{address}", out)
     out = _OBJDUMP_ADDR.sub("{func_addr} <", out)

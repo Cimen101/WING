@@ -1,4 +1,4 @@
-"""mem_xor_tool - 将 MemXorAnalyzer 包装为 ReAct Tool 接口.
+"""Sprint 10: mem_xor_tool - 将 MemXorAnalyzer 包装为 ReAct Tool 接口.
 
 集成: ctf_agent.tools.__init__.py:default_tools()
 """

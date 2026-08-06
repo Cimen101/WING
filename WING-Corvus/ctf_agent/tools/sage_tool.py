@@ -1,7 +1,7 @@
-"""L2 密码学 LLL 攻击工具 (新增).
+"""L2 密码学 LLL 攻击工具 (Sprint 12 M2 新增).
 
 封装 fpylll 实现的 Common Private Exponent (Common d) 攻击,
-无需依赖庞大的 sagemath, 适合 修复 Triplet_Tweak 微退化.
+无需依赖庞大的 sagemath, 适合 Sprint 12 修复 Triplet_Tweak 微退化.
 
 适用场景:
 - 多个 RSA 实例 (n_i, e_i, c_i) 共享同一个短私钥 d
@@ -62,7 +62,7 @@ def _check_sage(ssh: SSHClient) -> bool:
 # ============ CommonDAttackTool ============
 
 class CommonDAttackTool(Tool):
-    """Common Private Exponent RSA LLL 攻击 ().
+    """Common Private Exponent RSA LLL 攻击 (Sprint 12 M2).
 
     用途: 多个 RSA 实例共享同一个短私钥 d 时, 用 LLL 格还原 d.
     适用: 3 个 (n_i, e_i, c_i) 元组, 共享 d, d 远小于 n_i.
@@ -278,5 +278,5 @@ print("Done")
 # ============ 工厂函数 ============
 
 def sage_tools(ssh_client: SSHClient) -> list[Tool]:
-    """返回密码学 LLL 攻击工具集 ()."""
+    """返回密码学 LLL 攻击工具集 (Sprint 12 M2)."""
     return [CommonDAttackTool(ssh_client)]

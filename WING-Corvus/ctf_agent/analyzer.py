@@ -224,7 +224,7 @@ class Analyzer:
             llm: LLM 客户端（use_llm=True 时必需）
             model: 模型名
             use_llm: 是否用 LLM 生成 writeup（默认 False 用模板，省 API）
-            skill_library: 持续学习——SkillLibrary 实例，
+            skill_library: Sprint 15 持续学习——SkillLibrary 实例，
                 提供时会在复盘同时提炼可复用 skill（writeup 的结构化升级形式）。
             learn_skills: 是否在 analyze_and_store 时同步学习 skill（默认 True）。
         """
@@ -299,7 +299,7 @@ class Analyzer:
             metadata=full_meta,
             doc_id=doc_id,
         )
-        # 复盘同时提炼可复用 skill（writeup 的结构化升级形式）
+        # Sprint 15: 复盘同时提炼可复用 skill（writeup 的结构化升级形式）
         if self.learn_skills and self.skill_library is not None:
             self._learn_skill(task, result, metadata)
         return stored_id

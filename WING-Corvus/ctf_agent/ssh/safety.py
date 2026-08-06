@@ -1,4 +1,4 @@
-"""Kali 沙箱安全审计 (加固).
+"""Kali 沙箱安全审计 (Sprint 6 加固).
 
 依据用户架构校准：
 - 工作目录白名单（/tmp/ctf_real*/）：避免 agent 误操作宿主机
@@ -6,7 +6,9 @@
 - 危险命令需"判决模型"二次确认（架构预留接口）
 
 工作区原则：
-- /tmp/ctf_real/、/tmp/ctf_real2/、/tmp/ctf_real3/ → 历史沙箱工作区（保留兼容）
+- /tmp/ctf_real/  → 第 1 轮真题
+- /tmp/ctf_real2/ → 第 2 轮真题（Sprint 6）
+- /tmp/ctf_real3/ → 第 3 轮真题
 - /tmp/ctf_workspace/ → 默认工作区
 """
 
@@ -84,7 +86,7 @@ _BLOCK_PATTERNS: list[tuple[str, str]] = [
     (r"docker\s+run\s+.*--privileged", "特权容器"),
     (r"docker\s+run\s+.*--pid=host", "宿主机 PID 命名空间"),
     (r"docker\s+run\s+.*--net=host", "宿主机网络"),
-    # 靶场安全：禁止直接读取靶场容器 flag（非正常途径）
+    # 靶场安全（Sprint 15）：禁止直接读取靶场容器 flag（非正常途径）
     (r"docker\s+exec\s+\S*athena_\S*", "禁止 exec 进靶场容器（防直接读取 flag）"),
     (r"docker\s+(logs|inspect|cp|diff)\s+\S*athena_\S*", "禁止读取靶场容器日志/配置/文件（可能泄露 flag）"),
     (r"docker\s+exec\b[^\n;|&\r]*\bflag\b", "禁止在容器内执行读取 flag 的命令"),

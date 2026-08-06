@@ -439,6 +439,11 @@ def _parse_run_flags(flags: list[str]) -> dict[str, Any]:
         elif f == "--security-opt" and v:
             sec_opt.append(v)
             i += 2
+        elif f == "--add-host" and v:
+            host, _, val = v.partition(":")
+            extra = kw.setdefault("extra_hosts", {})
+            extra[host] = val
+            i += 2
         else:
             i += 1
     if labels:
@@ -806,6 +811,9 @@ class DockerClient:
             "--pids-limit", str(_PIDS_LIMIT),
             "--cap-add", "SYS_PTRACE", "--security-opt", "seccomp=unconfined",
         ]
+        # GCTF25 本地靶机访问: agent 容器需经 host.docker.internal 连接宿主映射的靶机端口
+        # (Docker Desktop / Linux 容器均支持 host-gateway 写法, 无副作用)
+        flags += ["--add-host", "host.docker.internal:host-gateway"]
         if not self._backend.create_and_start(
                 self.container_name, self.image, flags, ["sleep", "infinity"]):
             return False

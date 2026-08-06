@@ -1,10 +1,10 @@
-"""L2 OSINT 网络搜索 + 地理编码工具 (新增).
+"""L2 OSINT 网络搜索 + 地理编码工具 (Sprint 12 M3 新增).
 
 为 OSINT 题 (如 Where_am_i) 提供外部知识查询能力:
 - WebSearchTool: Yandex 公开搜索端点 (Kali 可达, 但常返回 captcha)
 - PhotonGeocodeTool: Photon (komoot.io) 地理编码 (基于 OSM, 公开, 无 key)
 
-Kali 沙箱网络限制 (实测):
+Kali 沙箱网络限制 (Sprint 12 M3 实测):
 - DuckDuckGo/Google/Wikipedia/Nominatim: 都 timeout 不可用
 - Yandex: 200 但常返回 captcha 页面, 大多数场景失败
 - Photon (komoot.io): 200 稳定可用, 基于 OSM 数据
@@ -47,7 +47,7 @@ def _check_tool(ssh: SSHClient, tool_name: str) -> bool:
 # ============ PhotonGeocodeTool (替代 Nominatim) ============
 
 class PhotonGeocodeTool(Tool):
-    """Photon (komoot.io) 地理编码 ().
+    """Photon (komoot.io) 地理编码 (Sprint 12 M3).
 
     用途: 给定遗址/地名 → 返回 GPS 坐标 (lat, lon, display_name).
     优势: 公开 API, 无 key, 基于 OpenStreetMap 数据, 包含 nature_reserve / petroglyph 等 OSM 类型.
@@ -187,27 +187,33 @@ class _YandexResultParser(HTMLParser):
 
 
 class WebSearchTool(Tool):
-    """多后端网络搜索 (增强).
+    """多后端网络搜索 (Sprint 12 M3 增强, Sprint 36.4 泛化).
 
-    用途: OSINT 题需要外部知识 (如考古遗址名/纪念碑位置) 时.
+    用途: 通用技术查阅/解题辅助 — 查算法原理、库/工具用法、数学技巧、语言特性、
+    已知攻击的通用描述等 (不查具体题目). 任何 CTF 题型遇到"不会的东西"都可以用.
     后端顺序: DuckDuckGo HTML -> Bing -> Yandex, 取第一个返回有效结果的.
-    降级: 全部失败时提示 LLM 用自身知识推理 + osm_geocode 拿坐标.
+    降级: 全部失败时提示 LLM 用自身知识推理.
+
+    合规护栏 (Sprint 36.4): 禁止搜索 writeup/题解/本题信息. query 若含
+    writeup/solution/solve/cheat 等关键词, 直接拒绝执行并提示改为查通用技术原理.
     """
 
     name = "web_search"
     description = (
-        "网络搜索 (OSINT 题用). 自动尝试多个后端 (DuckDuckGo / Bing / Yandex), "
+        "通用网络搜索 (解题辅助/技术查阅). 自动尝试多个后端 (DuckDuckGo / Bing / Yandex), "
         "返回标题 + URL 列表.\n"
-        "用法: web_search(query='Tamgaly petroglyphs Kazakhstan', max_results=5)\n"
-        "OSINT 用法: 先用 LLM 知识猜候选, 再用 osm_geocode 拿坐标; "
-        "搜索失败时用 LLM 自身知识推理."
+        "用法: web_search(query='<技术关键词>', max_results=5)\n"
+        "适用: 查算法/密码学/二进制/协议/工具库的通用原理与用法, 如 'LLL lattice attack', "
+        "'python pickle deserialization exploit', 'GDB attach 技巧' 等.\n"
+        "禁止: 不得搜索本题题目名 / writeup / solution / 出题人题解. 只能搜通用技术原理.\n"
+        "失败时用 LLM 自身知识推理."
     )
     parameters = {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "搜索关键词 (英文效果最好, 中文也行)",
+                "description": "搜索关键词 (通用技术原理/算法/工具用法, 不得含题目名/writeup)",
             },
             "max_results": {
                 "type": "integer",
@@ -285,6 +291,17 @@ class WebSearchTool(Tool):
     def execute(self, query: str, max_results: int = 5, **_: Any) -> str:
         if not query:
             return "ERROR: query 不能为空"
+        # Sprint 36.4 合规护栏: 禁止搜索 writeup/题解/本题信息
+        q_lower = query.lower()
+        banned = ("writeup", "write-up", "solution", "solver", "cheat", "spoiler",
+                  "how to solve", "solution file", "官方题解", "题解")
+        for kw in banned:
+            if kw in q_lower:
+                return (
+                    f"ERROR: 查询含违规关键词 '{kw}' (禁止搜索 writeup/题解/本题信息).\n"
+                    f"改为搜索通用技术原理/算法/工具用法, 例如: 'LLL lattice attack recovery', "
+                    f"'ctf crypto common attack techniques', 'GDB 动态调试技巧'."
+                )
         err = self._ensure()
         if err:
             return err
@@ -326,13 +343,13 @@ class WebSearchTool(Tool):
 # ============ 工厂 ============
 
 def reverse_image_tools(ssh_client: SSHClient) -> list[Tool]:
-    """创建 OSINT 网络搜索/地理编码工具集 ().
+    """创建 OSINT 网络搜索/地理编码工具集 (Sprint 12 M3).
 
     Args:
         ssh_client: 已连接的 SSHClient 实例
 
     Returns:
-        reverse image 工具列表: web_search (Yandex) + osm_geocode (Photon)
+        reverse image 工具列表: web_search (多后端) + osm_geocode (Photon)
     """
     return [
         WebSearchTool(ssh_client),
@@ -340,8 +357,21 @@ def reverse_image_tools(ssh_client: SSHClient) -> list[Tool]:
     ]
 
 
+def web_search_tools(ssh_client: SSHClient) -> list[Tool]:
+    """创建通用网络搜索工具 (Sprint 36.4 泛化, 独立注册, 不依赖 OSINT 开关).
+
+    Args:
+        ssh_client: 已连接的 SSHClient 实例
+
+    Returns:
+        仅 web_search 工具 (通用技术查阅/解题辅助, 含防 writeup 护栏)
+    """
+    return [WebSearchTool(ssh_client)]
+
+
 __all__ = [
     "WebSearchTool",
     "PhotonGeocodeTool",
     "reverse_image_tools",
+    "web_search_tools",
 ]

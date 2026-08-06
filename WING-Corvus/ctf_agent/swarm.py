@@ -1,7 +1,7 @@
 """WING-Goose 第 7 节第 1 项: runner 层 swarm 编排.
 
 同题 N 子进程并行 (每路一个 style) + 跨进程提交协调 (一解出即杀其余) +
-难度 → 并发度策略 (历史测试结论: easy 单路, medium/hard 3 风格并行).
+难度 → 并发度策略 (T3 结论: easy 单路, medium/hard 3 风格并行).
 
 用法:
     from ctf_agent.swarm import SwarmCoordinator
@@ -27,7 +27,7 @@ from typing import Any, Callable
 
 from ctf_agent.client import AgentCallbacks, AgentClient, AgentResult
 
-# 历史测试结论: easy 单路; medium/hard 3 风格并行
+# T3 结论: easy 单路; medium/hard 3 风格并行
 DEFAULT_STYLES_BY_DIFFICULTY = {
     "easy": [""],                                            # 单路默认保守
     "medium": ["conservative", "aggressive", "innovative"],
@@ -86,7 +86,7 @@ class SwarmCoordinator:
             python_executable: Python 解释器 (默认 sys.executable)
             verify_flag: flag 校验回调 (flag) -> (is_correct, feedback).
                 默认 None: 接受第一个提交的 flag 为解出 (agent 只提交确认的 flag)
-                ⚠️ 设计约定 (复杂逆向题 复盘):
+                ⚠️ 设计约定 (Crypto_Reverse 复盘):
                   - verify_flag 的职责是"平台/确证性校验"(如 NSS 真实提交), 不是"防幻觉"
                     (防幻觉已由 react.py 内部兜底: 无工具调用直接 Final 会被拒绝).
                   - 只有存在确凿反证 (明确不匹配证据) 时才返回 False; 无法判定时应
@@ -101,20 +101,20 @@ class SwarmCoordinator:
         self.workdir = Path(workdir) if workdir else root / "data" / "swarm_tasks"
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.verify_flag = verify_flag
-        # 总指挥开关 — None=读 config SWARM_COMMANDER_ENABLED
+        # Sprint 36 (WING-Corvus): 总指挥开关 — None=读 config SWARM_COMMANDER_ENABLED
         self.commander_enabled = commander_enabled
 
         self._lock = threading.Lock()
         self._procs: dict[str, subprocess.Popen] = {}
         self._solved: dict[str, str] = {"flag": "", "style": ""}
 
-    # ---------- 总指挥生命周期 ----------
+    # ---------- Sprint 36 (WING-Corvus): 总指挥生命周期 ----------
 
     @staticmethod
     def _kill_tree(proc) -> None:
         """kill 进程树 (Windows: taskkill /F /T 杀主进程+子孙进程; 其他: kill).
 
-        背景 (历史复盘): 单用 proc.kill() 只杀 python 主进程,
+        背景 (Sprint 36 复盘): 单用 proc.kill() 只杀 python 主进程,
         其 spawn 的 docker exec/ssh 孙进程残留, 子进程 stdout 不关闭,
         readline 阻塞导致线程不结束, swarm join 等待失效 ("未及时 kill").
         """
@@ -165,6 +165,13 @@ class SwarmCoordinator:
             bus_key = str(task.get("bus_challenge_id")
                           or task.get("challenge_id") or "swarm")
             styles = [s for s in (task.get("styles") or []) if s]
+            # WING KB: 总指挥层知识库参考
+            kb = None
+            try:
+                from ctf_agent.knowledge import KnowledgeBase
+                kb = KnowledgeBase()
+            except Exception:
+                kb = None
             cmdr = Commander(
                 llm=RoutedLLMClient(settings=get_settings()),
                 title=str(task.get("title") or ""),
@@ -175,19 +182,20 @@ class SwarmCoordinator:
                 challenge_id=bus_key,
                 bus=bus,
                 bus_challenge_id=bus_key,
+                knowledge_base=kb,
             )
             assignments = cmdr.assign_initial()
             if not assignments:
                 return None
             # 初始任务契约 → 每条 post_directive (战略层首步 check 读取, 统一走总线协议)
-            # 领题即 P1 侦查阶段 (阶段信息随指令下发给战略层)
+            # Sprint 36.2: 领题即 P1 侦查阶段 (阶段信息随指令下发给战略层)
             for a in assignments:
                 bus.post_directive(
                     agent_id=a.style, task_id=bus_key, content=a.task,
                     task_no=a.task_no, priority="SHOULD", reason="领题分工",
                     phase="P1",
                 )
-            # 领题分工日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
+            # Sprint 36: 领题分工日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
             if on_commander:
                 try:
                     parts = "; ".join(
@@ -215,7 +223,7 @@ class SwarmCoordinator:
         while not stop_event.is_set():
             try:
                 directives = cmdr.run_once(bus=bus)
-                # 总指挥指令日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
+                # Sprint 36: 总指挥指令日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
                 if directives and on_commander:
                     for d in directives:
                         try:
@@ -276,7 +284,7 @@ class SwarmCoordinator:
             on_step=lambda obj: _cb(name="on_step", style=style, on_cb=on_step, obj=obj),
             on_log=lambda lv, msg: _cb(name="on_log", style=style, on_cb=on_log,
                                        level=lv, message=msg),
-            # 完整巡查/总指挥 dict 透传 (belief_state/reflection 详情写文件)
+            # Sprint 36: 完整巡查/总指挥 dict 透传 (belief_state/reflection 详情写文件)
             on_coordinator=(lambda obj: _cb(name="on_coordinator", style=style,
                                             on_cb=on_coordinator, obj=obj))
             if on_coordinator else None,
@@ -309,7 +317,7 @@ class SwarmCoordinator:
         max_seconds: float = 600.0,
         on_step=None,
         on_log=None,
-        # 完整巡查 dict (style, obj) 透传 + 总指挥生命周期日志
+        # Sprint 36 (WING-Corvus): 完整巡查 dict (style, obj) 透传 + 总指挥生命周期日志
         on_coordinator=None,
         on_commander=None,
     ) -> SwarmResult:
@@ -338,12 +346,12 @@ class SwarmCoordinator:
         base_id = str(task.get("challenge_id") or "swarm")
         swarm_start = time.monotonic()
 
-        # 注入实际风格列表到 task (总指挥领题分工按真实参与风格分配,
+        # Sprint 36: 注入实际风格列表到 task (总指挥领题分工按真实参与风格分配,
         # 避免 Commander 内部 DEFAULT_STYLES 与调用方显式 styles 不一致)
         task = dict(task)
         task["styles"] = list(styles)
 
-        # 总指挥生命周期 — 异步事件驱动, 不阻塞主 LLM.
+        # Sprint 36 (WING-Corvus): 总指挥生命周期 — 异步事件驱动, 不阻塞主 LLM.
         # 总指挥初始化 (assign_initial 是同步 LLM 调用, 最坏 90s×2 重试) 必须放后台线程:
         # 否则 worker 启动被阻塞, 整题开局停滞 (实测: 卡在"总指挥模式: 3 风格并行"
         # 后无 worker 日志). 初始 directive 后到无碍 — worker 首轮 check 才读取总线.
@@ -401,7 +409,7 @@ class SwarmCoordinator:
             threads.append(th)
             th.start()
 
-        # 修复: join 必须所有线程共享同一 deadline 并行等待
+        # Sprint 36 修复: join 必须所有线程共享同一 deadline 并行等待
         # (旧实现逐个 join(timeout) 累计等待: 3 路 × 540s = 1620s,
         #  导致子进程早该被 kill 却拖到 N×timeout 才返回 "未及时 kill").
         deadline = time.monotonic() + max_seconds + 60

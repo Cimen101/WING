@@ -5,7 +5,7 @@
 
 - conservative: 保守 — 侦察先行, 小步验证, 标准工具链
 - aggressive  : 激进 — 快速试错, 多路径并行, 已知攻击工具优先
-- innovative  : 创新 — 非常规思路 + 创造性工具箱 (针对创新创造性不足增强)
+- innovative  : 创新 — 非常规思路 + 创造性工具箱 (针对 T2-REV 创新创造性不足增强)
 """
 
 STYLE_GUIDANCE = {

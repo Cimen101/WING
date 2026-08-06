@@ -1,4 +1,4 @@
-"""全局 stop 信号 (独立模块, 避免循环导入).
+"""Sprint 26: 全局 stop 信号 (独立模块, 避免循环导入).
 
 solve.py 和 react.py 都需要访问 stop 标志, 但 solve.py 导入 react.py
 (ReActEngine), react.py 不能反向导入 solve.py (循环导入).

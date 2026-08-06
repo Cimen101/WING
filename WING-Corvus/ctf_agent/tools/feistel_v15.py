@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""- 正确实现 复杂逆向题 disasm 算法 (验证用).
+"""Sprint 15 P0 - 正确实现 Crypto_Reverse disasm 算法 (验证用).
 
 按 main_disasm.txt 真实 disasm 实现:
 - ror32(x, n) - rotate right 32 bits by n

@@ -25,7 +25,7 @@ from ctf_agent.llm import LLMClient, Message
 from ctf_agent.memory.skill_library import Skill, SkillLibrary
 
 
-# ── Skill 脱敏与泛化 ──────────────────────────────
+# ── Sprint 28: Skill 脱敏与泛化 ──────────────────────────────
 
 # 匹配 /tmp/nss_arena/{数字或名称}/ 前缀
 _RE_TMP_PATH = re.compile(r'/tmp/nss_arena/[a-zA-Z0-9_]+(/[^\s]*)?')
@@ -40,7 +40,7 @@ _RE_REDACTED = re.compile(r'FLAG_REDACTED\.+', re.IGNORECASE)
 
 
 def _sanitize_text(text: str) -> str:
-    """脱敏 — 将绝对路径、具体地址、flag 内容替换为通用占位符.
+    """Sprint 28: 脱敏 — 将绝对路径、具体地址、flag 内容替换为通用占位符.
 
     用户要求: skill 是"解题智慧"不是"执行日志".
     - /tmp/nss_arena/1234/file.zip → {work_dir}/file.zip
@@ -93,11 +93,11 @@ def _tool_chain(result: ReActResult) -> list[str]:
 
 
 def _key_observations(result: ReActResult, limit: int = 4) -> list[str]:
-    """抽取有信息量的 Observation 片段（成功步骤优先, 脱敏后输出）。"""
+    """抽取有信息量的 Observation 片段（成功步骤优先, Sprint 28: 脱敏后输出）。"""
     obs: list[str] = []
     for s in result.steps:
         if s.observation and not s.is_error:
-            # 脱敏 — 移除绝对路径/地址/flag, 只保留方法论
+            # Sprint 28: 脱敏 — 移除绝对路径/地址/flag, 只保留方法论
             snippet = _sanitize_text(s.observation.strip().replace("\n", " "))
             if len(snippet) > 160:
                 snippet = snippet[:160] + "..."
@@ -132,7 +132,7 @@ _LLM_SKILL_PROMPT = """你是 CTF 解题教练。请把下面这次{status}的�
 """
 
 
-# 套路特征提取 — 用于跨题匹配 (基于套路而非题目名称)
+# Sprint 28: 套路特征提取 — 用于跨题匹配 (基于套路而非题目名称)
 # 这些是 CTF 题目中常见的、能标识题目类型的技术特征词
 _PATTERN_KEYWORDS = {
     # Crypto
@@ -166,7 +166,7 @@ _PATTERN_KEYWORDS = {
 
 
 def _extract_pattern_features(task: str, result: ReActResult) -> list[str]:
-    """从题目描述 + 解题过程中提取套路特征.
+    """Sprint 28: 从题目描述 + 解题过程中提取套路特征.
 
     套路特征是能标识"这类题"的技术关键词, 用于跨题匹配.
     例如: 一道 RSA 题的套路特征 = ["RSA", "n =", "e =", "c ="]
@@ -198,7 +198,7 @@ def _extract_pattern_features(task: str, result: ReActResult) -> list[str]:
 
 
 def _template_body(result: ReActResult, task: str) -> str:
-    """结构化 skill 模板 — 脱敏 + If-Then 格式."""
+    """Sprint 28: 结构化 skill 模板 — 脱敏 + If-Then 格式."""
     tools = _tool_chain(result)
     obs = _key_observations(result)
     lines = []
@@ -223,7 +223,7 @@ def _template_body(result: ReActResult, task: str) -> str:
         reason = _sanitize_text(result.fail_reason)
         lines.append(f"坑: {reason}")
     if result.final_answer and result.success:
-        # 禁止把 flag 明文写入 skill
+        # Sprint 22.5: 禁止把 flag 明文写入 skill
         lines.append("结果: 成功得到 flag（内容不记录, 防污染）")
     return "\n".join(lines) if lines else "(无足够信息)"
 
@@ -276,7 +276,7 @@ def learn_skill(
     title = f"{prefix}{challenge_type} 题解题套路（{'+'.join(tools[:3])}）"
     trigger = f"{challenge_type} 类题目" + (f"（{difficulty}）" if difficulty else "")
 
-    # 关联快速解题脚本（skill 与 quick_solve 联动）
+    # Sprint 15: 关联快速解题脚本（skill 与 quick_solve 联动）
     script_ref, reg = _match_quick_solve(challenge_type, tools, task)
     if script_ref and reg is not None and result.success:
         # 成功经验实时回填：提升该方向模板脚本的排序权重
@@ -285,7 +285,7 @@ def learn_skill(
         except Exception:  # noqa: BLE001
             pass
 
-    # 提取套路特征 (用于跨题匹配, 基于套路而非题目名称)
+    # Sprint 28: 提取套路特征 (用于跨题匹配, 基于套路而非题目名称)
     pattern_features = _extract_pattern_features(task, result)
 
     return library.add_or_update(

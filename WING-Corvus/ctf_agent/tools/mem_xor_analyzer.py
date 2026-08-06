@@ -1,4 +1,4 @@
-"""内存 dump 专用分析器 (Memory XOR Analyzer).
+"""Sprint 10: 内存 dump 专用分析器 (Memory XOR Analyzer).
 
 背景:
   v5 测试中 RAM_Drift 从 v4 6 步成功退化为 v5 24 步失败。

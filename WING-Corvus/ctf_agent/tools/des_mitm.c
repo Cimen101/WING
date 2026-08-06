@@ -1,4 +1,4 @@
-// des_cryptanalysis MITM C 加速
+// Sprint 14 P4 - des_cryptanalysis MITM C 加速
 // 24-bit sub-key 搜索 (与 Python MITM 一致, 提供 C 加速)
 //
 // 限制: 假设 sub_key 的高 8 位 = 0. 若实际 sub_key 高 8 位非 0 (SHA-256 keys 通常如此),

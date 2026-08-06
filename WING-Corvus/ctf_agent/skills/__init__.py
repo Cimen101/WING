@@ -1,4 +1,4 @@
-"""结构化 Skill 库 (替代 L-Memory 的 RAG writeup, 提供可重用的解题模式).
+"""Sprint 16: 结构化 Skill 库 (替代 L-Memory 的 RAG writeup, 提供可重用的解题模式).
 
 依据用户核心目标: 智能体在只有正常比赛题目描述时, 全自主解题, 期间能运用积累的 SKILL.
 

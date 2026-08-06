@@ -1,8 +1,8 @@
 """智能体层（L3）.
 
 阶段二：单智能体 ReAct 引擎。
-阶段五：Planner-Executor-Critic 多智能体协作。
-阶段六：并行执行 + 赛马机制 + 冲突仲裁。
+阶段五（Sprint 5.9）：Planner-Executor-Critic 多智能体协作。
+阶段六（Sprint 5.10）：并行执行 + 赛马机制 + 冲突仲裁。
 """
 
 from ctf_agent.agent.multi_agent import (

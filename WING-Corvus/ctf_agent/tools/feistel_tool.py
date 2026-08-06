@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""L2 Feistel 密码解密工具 (重写).
+"""L2 Feistel 密码解密工具 (Sprint 15 P0 重写).
 
-复杂逆向题实际算法 (per main_disasm.txt):
+Crypto_Reverse 实际算法 (per main_disasm.txt):
 - 64-bit 块 (32-bit L + 32-bit R)
 - 8 轮 Feistel
 - 密钥: 32-bit low_key 实际有效, high_key 仅在 == 0xFFFFFFFF 时影响 rk[0]
@@ -169,7 +169,7 @@ def _c_brute_decrypt(
 # ============ FeistelDecryptTool ============
 
 class FeistelDecryptTool(Tool):
-    """复杂逆向题 类 Feistel 密钥恢复 + 解密工具 (重写).
+    """Crypto_Reverse 类 Feistel 密钥恢复 + 解密工具 (Sprint 15 P0 重写).
 
     算法: 8 轮 Feistel, 64-bit 块, 32-bit 有效 key (MurmurHash3 mix32 F-function).
     攻击: 反向 brute-force, 检查已知前缀 'athena{', 复杂度 2^32 ≈ 47s in C.
@@ -190,7 +190,7 @@ class FeistelDecryptTool(Tool):
 
     name = "feistel_decrypt"
     description = (
-        "复杂逆向题 Feistel 密钥恢复 + 解密.\n"
+        "Crypto_Reverse Feistel 密钥恢复 + 解密 (Sprint 15 P0).\n"
         "算法: 8 轮 Feistel, 64-bit 块, 32-bit 有效 key, MurmurHash3 mix32 F-function.\n"
         "攻击: 反向 brute-force, 2^32 keys ≈ 47s in C on Kali (SSH).\n"
         "用法: feistel_decrypt(encrypted_hex='...32hex...', known_prefix='athena{').\n"
@@ -326,5 +326,5 @@ class FeistelDecryptTool(Tool):
 # ============ 工厂函数 ============
 
 def feistel_tools(ssh_client: SSHClient) -> list[Tool]:
-    """返回 Feistel 密码解密工具集 ()."""
+    """返回 Feistel 密码解密工具集 (Sprint 15 P0)."""
     return [FeistelDecryptTool(ssh_client)]

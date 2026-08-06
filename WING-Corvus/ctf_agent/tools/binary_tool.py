@@ -1,4 +1,4 @@
-"""binary_tool - 将 BinaryAnalyzer 包装为 ReAct Tool 接口.
+"""Sprint 8: binary_tool - 将 BinaryAnalyzer 包装为 ReAct Tool 接口.
 
 设计：
   - BinaryAnalyzer (binary_analyzer.py) 是核心分析类
@@ -36,7 +36,7 @@ class BinaryAnalyzeTool(Tool):
     name = "binary_analyze"
     description = (
         "对二进制文件执行结构化分析，返回 JSON：文件类型/架构/函数列表/字符串/CFG 摘要/flag 候选/"
-        "XOR 候选位置。支持 ELF/PE/APK。比直接跑 objdump/strings 节省 60%+ token，"
+        "XOR 候选位置 (Sprint 9)。支持 ELF/PE/APK。比直接跑 objdump/strings 节省 60%+ token，"
         "输出更适合 LLM 解析。auto 模式自动选择 Ghidra > radare2 > objdump。"
         "hard 逆向题首选此工具。XOR 候选位置会自动扫描 .rdata/.data 段，"
         "标记高置信度解密点（命中 flag 模式或可读 ASCII）。"
@@ -60,7 +60,7 @@ class BinaryAnalyzeTool(Tool):
                 "type": "string",
                 "enum": ["auto", "binary", "text_dump"],
                 "description": (
-                    "处理模式. auto(根据文件类型自动选择) / "
+                    "Sprint 10: 处理模式. auto(根据文件类型自动选择) / "
                     "binary(强制二进制分析) / "
                     "text_dump(.txt 内存 dump,返回提示改用 mem_xor_analyze)"
                 ),

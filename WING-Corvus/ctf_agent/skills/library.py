@@ -1,4 +1,4 @@
-"""Skill 库 ().
+"""Skill 库 (Sprint 16 P11-1).
 
 负责 Skill 的注册/检索/持久化.
 

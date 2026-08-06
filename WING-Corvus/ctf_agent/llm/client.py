@@ -68,6 +68,7 @@ class ChatResult:
     model: str = ""
     finish_reason: str = ""
     reasoning_content: str = ""  # 推理模型的思维链内容（如 deepseek reasoner 系列）
+    reasoning_fallback: bool = False  # Sprint 36.3: content 为空时回退了 reasoning_content
     raw: Any = None  # 原始响应，调试/扩展用
 
 
@@ -102,14 +103,20 @@ def _parse_response(resp: Any, model: str) -> ChatResult:
     reasoning_content = getattr(message, "reasoning_content", None) or ""
     finish_reason = getattr(choice, "finish_reason", "") or ""
     # content 为空但存在 reasoning_content 时，回退使用后者作为主内容
+    # Sprint 36.3: 标记 reasoning_fallback, 供 ReAct 引擎识别"退化思考输出" —
+    # 思考文本通常不含 Action 字段, 直接当主内容会触发格式解析失败;
+    # 引擎侧应走"空输出"恢复路径而非立即计格式错误.
+    reasoning_fallback = False
     if not content.strip() and reasoning_content.strip():
         content = reasoning_content
+        reasoning_fallback = True
     return ChatResult(
         content=content,
         usage=ChatUsage.from_openai(getattr(resp, "usage", None)),
         model=model,
         finish_reason=finish_reason,
         reasoning_content=reasoning_content,
+        reasoning_fallback=reasoning_fallback,
         raw=resp,
     )
 

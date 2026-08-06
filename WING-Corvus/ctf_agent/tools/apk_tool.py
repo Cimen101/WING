@@ -1,4 +1,4 @@
-"""L2 APK 反编译工具 (新增).
+"""L2 APK 反编译工具 (Sprint 12 新增).
 
 封装 Kali 上预装的 APK 反编译工具为 Tool 接口,让 LLM 直接调用:
 - ApkJadxTool: 用 jadx 把 dex 还原为可读 Java 源码 (首选, 适合阅读业务逻辑)
@@ -10,7 +10,7 @@
 - jadx 优先: 直接出 Java 源码, LLM 可读性远高于 smali
 - apktool 次之: 用于需要 smali/资源文件的场景 (如改包)
 
-关键作用: 解决 Simple_Calculator 退化 (v3 17步成功 → v7 28步失败).
+Sprint 12 关键作用: 解决 Simple_Calculator 退化 (v3 17步成功 → v7 28步失败).
 LLM 走 5 步即可解出 flag (jadx → grep revealFlag → 写 AES 解密 → flag).
 
 参考真实解法:
@@ -51,7 +51,7 @@ def _check_tool(ssh: SSHClient, tool_name: str) -> tuple[bool, str]:
 # ============ ApkJadxTool (首选) ============
 
 class ApkJadxTool(Tool):
-    """用 jadx 把 dex 还原为可读 Java 源码 ().
+    """用 jadx 把 dex 还原为可读 Java 源码 (Sprint 12).
 
     用途: reverse 题目, 附件是 .apk 文件, 需要分析 Android 应用逻辑.
     适用: 大部分 APK reverse 题 (如 Simple_Calculator, 加密/flag 计算逻辑).
@@ -167,7 +167,7 @@ class ApkJadxTool(Tool):
 # ============ ApkToolTool (备选) ============
 
 class ApkToolTool(Tool):
-    """用 apktool d 拆 smali + 资源 ().
+    """用 apktool d 拆 smali + 资源 (Sprint 12).
 
     用途: 需要 smali 字节码/资源文件/AndroidManifest.xml 原始结构时用.
     适用: 改包重打包、读取资源 (图片/xml)、分析 R8 混淆后 smali.
@@ -181,7 +181,7 @@ class ApkToolTool(Tool):
     description = (
         "用 apktool d 拆 APK 为 smali 字节码 + AndroidManifest.xml + 资源文件. "
         "比 jadx 更底层, 适合需要完整原始结构 (改包/资源/smali 深度分析) 的场景. "
-        "Kali 工具路径: /usr/bin/apktool (apt install). "
+        "Kali 工具路径: /usr/bin/apktool (Sprint 12 apt install). "
         "⚠️ 输出是 smali (汇编), LLM 阅读难度高, 优先用 apk_jadx 除非确需 smali."
     )
     parameters = {
@@ -262,7 +262,7 @@ class ApkToolTool(Tool):
 # ============ 工厂函数 ============
 
 def apk_tools(ssh_client: SSHClient) -> list[Tool]:
-    """返回 新增的 APK 工具集.
+    """返回 Sprint 12 新增的 APK 工具集.
 
     包含:
     - ApkJadxTool (首选, Java 源码)

@@ -881,20 +881,36 @@ class ReActEngine:
                 if self._must_repeat_left > 0:
                     # Sprint 36: MUST 执行检测 — 记录注入时主导动作; 若后续持续重复
                     # 相同动作 (未执行 MUST), 注入 [强制跳转] 更强阻断.
+                    # Sprint 36.7 修复: 空 action (格式解析失败) 不能重置计数器 —
+                    # agent 连续格式崩溃时 action="" != _must_action, 导致计数器
+                    # 每次被重置, [强制跳转] 永远无法触发, MUST 指令形同虚设.
                     recent_actions = [getattr(s, "action", "") or "" for s in steps[-3:]]
                     if not self._must_action and recent_actions:
                         self._must_action = recent_actions[-1]
                     if self._must_action:
-                        if recent_actions and recent_actions[-1] == self._must_action:
+                        last_action = recent_actions[-1] if recent_actions else ""
+                        if last_action == self._must_action or not last_action.strip():
+                            # 仍在执行相同动作, 或格式崩溃 (空 action) → 均视为未执行 MUST
                             self._must_ignore_steps += 1
                         else:
                             self._must_ignore_steps = 0  # 已换动作 (可能在执行指令)
                     if self._must_ignore_steps >= 2:
                         # 更强阻断: 直接要求切换, 并清空重复注入状态
+                        # Sprint 36.7: 追加系统级约束, 让 LLM 更难忽略
                         force_jump = (
                             f"\n[强制跳转] 你已连续 {self._must_ignore_steps} 步仍在执行 "
                             f"'{self._must_action}' (与 [MUST] 指令相悖). "
-                            f"立即停止该操作, 必须切换到完全不同的方法. 此路径已封锁, 不得再尝试."
+                            f"立即停止该操作, 必须切换到完全不同的方法. 此路径已封锁, 不得再尝试.\n"
+                            f"---\n"
+                            f"系统约束: 上一步操作 '{self._must_action}' 已被标记为无效路径, "
+                            f"当前环境中该操作无法产生任何有用输出. 你必须选择完全不同的工具或方法, "
+                            f"否则系统将判定为解题失败. 你的工具箱中还有以下可用但未使用的工具:\n"
+                            f"  - 如果当前是 crypto 题: crypto_rsa, crypto_classic, zkp_forge_proof, "
+                            f"otp_xor_analyze, aes_sidechannel, hash_collision, hex_dump, strings\n"
+                            f"  - 如果当前是 reverse 题: binary_analyze, ghidra_headless, "
+                            f"radare2, angr_symbolic_exec, strings, hex_dump\n"
+                            f"  - 通用: ssh_exec, ssh_python, http_request, web_search\n"
+                            f"---"
                         )
                         memory.add_user_message(force_jump)
                         self._must_action = ""
@@ -1826,7 +1842,7 @@ class ReActEngine:
             # Sprint 32.4: MUST 指导持久注入 — 连续重复 must_repeat 步
             # (确保 agent 真正执行, 而非注入一次被忽略)
             if guidance.priority == "MUST":
-                self._must_repeat_left = 2  # 本步 + 后续 2 步 = 3 次注入
+                self._must_repeat_left = 5  # Sprint 36.7: 2→5, 增加持久注入次数防止 LLM 忽略
             else:
                 self._must_repeat_left = 0
             # 如果有禁忌列表, 追加提醒

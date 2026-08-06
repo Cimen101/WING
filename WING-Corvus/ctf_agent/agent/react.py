@@ -1220,6 +1220,15 @@ class ReActEngine:
                             step_no += 1
                             continue
 
+                    # Sprint 36.5: flag 验证通过 → 提交前实时上报总指挥 (P3→P4 信号).
+                    # 事实信号 (flag 文本本身) 直通总线, 不依赖战略层巡查 LLM 恰好输出
+                    # p2_verified — 从根源解决"agent 已解出但总指挥阶段停在 P2"的断裂.
+                    if self._coordinator is not None:
+                        try:
+                            self._coordinator.report_flag_solved(flag_candidate)
+                        except Exception:
+                            pass  # 上报失败不影响提交主流程
+
                     # 调用 submission_handler 提交答案
                     self._submitted_flags.add(flag_candidate)
                     self._submission_count += 1
@@ -1244,6 +1253,12 @@ class ReActEngine:
                         )
                     else:
                         # 提交失败 → 注入反馈, 继续循环 (不重新开始)
+                        # Sprint 36.5: 实时上报总指挥 (P4→P3 回退信号), 避免阶段停留 P4.
+                        if self._coordinator is not None:
+                            try:
+                                self._coordinator.report_submit_fail(flag_candidate, feedback)
+                            except Exception:
+                                pass  # 上报失败不影响主流程
                         remaining = self._max_submissions - self._submission_count
                         self._mem_round(memory, chat_result.content,
                             f"❌ 答案提交失败: {flag_candidate}\n"

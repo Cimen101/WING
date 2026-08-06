@@ -155,6 +155,8 @@ class Commander:
         # 阶段切换的规则阈值 (Sprint 36.2: 改为"任务驱动 + 进度汇报驱动", 非步数硬门槛)
         # P1→P2: 三路全部完成侦查汇报 (progress_count ≥1 且无死锁) 才进入 P2
         self._phase_p3_fail_threshold = 2   # P3→P2: 多路连续失败数 (激进+保守均报告失败)
+        # Sprint 36.5: 已提交失败的 flag 集合 (P4→P3 回退后防止同一 flag 反复触发 P3→P4)
+        self._failed_flags: set[str] = set()
 
     # ---------- 领题: 任务分解与分工 ----------
 
@@ -333,10 +335,13 @@ class Commander:
             content = str(r.get("content") or "")
             topics = self._extract_topics(content)
             rtype = str(r.get("report_type") or "clue")
-            # 失败信号: dead_end 汇报 或 内容含失败/无效/证伪 关键词
+            # 失败信号: dead_end 汇报 或 内容含失败/无效/证伪 关键词.
+            # Sprint 36.5: submit_fail (提交失败) 不计入"方向死路"失败计数 —
+            # 它只用于 P4→P3 回退 (flag 错误≠方向证伪), 避免误触发 P3→P2 回退.
             fail_signals = ("dead_end",)
-            is_fail = rtype in fail_signals or any(
-                k in content.lower() for k in ("失败", "无效", "证伪", "不可行", "无法", "failed"))
+            is_fail = (rtype != "submit_fail") and (
+                rtype in fail_signals or any(
+                    k in content.lower() for k in ("失败", "无效", "证伪", "不可行", "无法", "failed")))
             entry = self._style_reports.setdefault(style, {
                 "topics": [], "fails": 0, "last_ts": 0.0, "last_report": "",
                 "progress_count": 0, "reported": False,
@@ -372,39 +377,62 @@ class Commander:
           LLM 分析确凿后才切换. 不再是"任一 FACT clue"的宽松门槛.
         - P3→P2: ≥2 路报告失败/死路且无 FACT 成功 (方向错误回退, 优先于前进)
         - P3→P4: 汇报含 flag 候选 (report_type=flag 或 content 含 flag 模式)
+        - P4→P3: 提交失败 (submit_fail 汇报) — Sprint 36.5 补齐设计文档 4.5 缺失的回退
+
+        Sprint 36.5 (2026-08-06, 用户要求"不能跳 P4"):
+        - **单级推进**: 每轮最多切换一级 (P1→P2 / P2→P3 / P3→P4), 不再 while 连跳.
+          确保每级切换都经过对应确凿环节 (P1→P2 全局情报整合 / P2→P3 确凿分析 /
+          P3→P4 flag 候选进入验证), 从根源杜绝"跳 P4".
+        - **P2→P3 增加 flag 候选信号**: 战术层取得 flag 文本本身 = 最强验证证据
+          (强于战略层 LLM 对方向的判断), 与 verified 汇报等价触发 P2→P3 —
+          解决 agent 已解出但阶段卡死在 P2 的断裂 (nss_2950 复盘).
+        - **P4→P3 提交失败回退**: 注册失败 flag 防止同一 flag 反复触发 P3→P4 死循环.
         返回新阶段; 无切换返回当前.
         """
-        fact_clues, likely_reports, fail_styles, flag_candidate, verified = (
+        fact_clues, likely_reports, fail_styles, flag_candidate, verified, submit_fail = (
             self._collect_phase_signal())
         cur = self._phase
+        # Sprint 36.5: 提交失败 → 注册失败 flag + P4→P3 回退 (回退优先于前进)
+        if cur == "P4" and submit_fail:
+            self._register_failed_flags()
+            self._context.append("[阶段] P4 验证失败 (提交被驳回), 回退 P3 继续利用")
+            self._trim_context()
+            return "P3"
         # 回退优先: P3 时 ≥2 路失败且无 FACT 成功 → 直接回 P2 (本轮不再前进)
         if cur == "P3":
             if len(fail_styles) >= self._phase_p3_fail_threshold and fact_clues == 0:
                 return "P2"
-            if flag_candidate:
-                return "P4"
-        # 前进链路 (Sprint 36.2: 每级都有确凿门槛, 不能跳过)
-        while True:
-            nxt = cur
-            if cur == "P1":
-                # P1→P2: 三路全部完成侦查 (recon_done) 才可切换 (任务驱动 + 进度汇报驱动).
-                # 2026-08-05 校准: 不再用"任一 progress 即算完成" — 战略层 LLM 判断
-                # 该路基础侦查已覆盖题目全貌 (recon_done) 才算完成; 全部完成后由
-                # run_once 触发全局情报摘要整合 + 主方向确定, 之后才正式进入 P2.
-                all_done = all(
-                    entry.get("recon_done") for entry in self._style_reports.values()
-                ) and len(self._style_reports) >= len(self.styles)
-                if all_done:
-                    nxt = "P2"
-            elif cur == "P2" and verified:
-                # P2→P3: 存在已验证的方向 (证据支撑 + 验证通过), 由总指挥 LLM 确凿确认
-                nxt = "P3"
-            elif cur == "P3" and flag_candidate:
-                nxt = "P4"
-            if nxt == cur:
-                break
-            cur = nxt
+        # 前进链路 (Sprint 36.5: 单级推进, 每轮最多切一级 — 不连跳, 每级确凿)
+        if cur == "P1":
+            # P1→P2: 三路全部完成侦查 (recon_done) 才可切换 (任务驱动 + 进度汇报驱动).
+            # 2026-08-05 校准: 不再用"任一 progress 即算完成" — 战略层 LLM 判断
+            # 该路基础侦查已覆盖题目全貌 (recon_done) 才算完成; 全部完成后由
+            # run_once 触发全局情报摘要整合 + 主方向确定, 之后才正式进入 P2.
+            all_done = all(
+                entry.get("recon_done") for entry in self._style_reports.values()
+            ) and len(self._style_reports) >= len(self.styles)
+            if all_done:
+                return "P2"
+        elif cur == "P2" and (verified or flag_candidate):
+            # P2→P3: 方向已验证 (verified 汇报) 或战术层已取得 flag 候选 —
+            # flag 文本本身 = 最强验证证据 (强于战略层 LLM 对方向的判断),
+            # 与 verified 等价触发 P2→P3, 由 run_once 确凿确认后切换.
+            return "P3"
+        elif cur == "P3" and flag_candidate:
+            # P3→P4: 存在未提交失败的 flag 候选 → 进入验证提交阶段
+            return "P4"
         return cur
+
+    def _register_failed_flags(self) -> None:
+        """从最近 context 的 submit_fail 汇报中提取失败 flag, 加入 _failed_flags.
+
+        防止 P4→P3 回退后同一 flag 反复触发 P3→P4 (死循环).
+        """
+        for line in self._context[-self.context_window:]:
+            if "[汇报:submit_fail]" not in line:
+                continue
+            for m in re.finditer(r"[A-Za-z0-9_]+\{[^{}]{4,}\}", line):
+                self._failed_flags.add(m.group(0))
 
     def _p1_synthesize(self, bus: Any = None) -> list[CommanderDirective]:
         """Sprint 36.2 (WING-Corvus P1): 三路侦查全部完成 → 整合全局情报摘要 + 确定主方向.
@@ -583,19 +611,38 @@ class Commander:
             )
         return "\n".join(lines)
 
-    def _collect_phase_signal(self) -> tuple[int, int, set[str], bool, bool]:
-        """汇总阶段切换信号: (FACT clue 数, LIKELY 汇报数, 失败风格集, flag 候选, 方向验证信号)."""
+    def _line_has_new_flag(self, line: str) -> bool:
+        """判断 context 行是否含"新的"(未提交失败过的) flag 候选.
+
+        Sprint 36.5: P3→P4 需要 flag 候选, 但已提交失败 (P4→P3 回退) 的 flag
+        不得再触发 P3→P4 — 防止同一错误 flag 造成 P4→P3→P4 死循环.
+        """
+        if not ("flag{" in line or "候选flag" in line or "flag 候选" in line or "[汇报:flag]" in line):
+            return False
+        m = re.search(r"[A-Za-z0-9_]+\{[^{}]{4,}\}", line)
+        return not (m and m.group(0) in self._failed_flags)
+
+    def _collect_phase_signal(self) -> tuple[int, int, set[str], bool, bool, bool]:
+        """汇总阶段切换信号: (FACT clue 数, LIKELY 汇报数, 失败风格集, flag 候选, 方向验证信号, 提交失败信号)."""
         fact_clues = 0
         likely_reports = 0
         fail_styles: set[str] = set()
         flag_candidate = False
         verified = False
+        submit_fail = False
         for style, entry in self._style_reports.items():
-            if self._report_type_of(style) == "flag":
-                flag_candidate = True
+            rtype = self._report_type_of(style)
+            if rtype == "flag":
+                # Sprint 36.5: 该路 flag 候选须未提交失败过 (防 P4→P3→P4 死循环)
+                flag_line = self._last_report_line(style)
+                if flag_line and self._line_has_new_flag(flag_line):
+                    flag_candidate = True
             # Sprint 36.2: verified 汇报 (方向验证成功, 证据支撑+验证通过)
-            if self._report_type_of(style) == "verified":
+            if rtype == "verified":
                 verified = True
+            # Sprint 36.5: submit_fail 汇报 (提交被驳回) — P4→P3 回退信号
+            if rtype == "submit_fail":
+                submit_fail = True
             if entry["fails"] >= 1:
                 fail_styles.add(style)
         # 从上下文推断 (最近汇报) — 匹配 context 格式 "(任务N, FACT/LIKELY)"
@@ -604,11 +651,20 @@ class Commander:
                 fact_clues += 1
             if re.search(r"\(任务\d+,\s*LIKELY\)", line):
                 likely_reports += 1
-            if "flag{" in line or "候选flag" in line or "flag 候选" in line:
+            if self._line_has_new_flag(line):
                 flag_candidate = True
             if "[汇报:verified]" in line or "验证成功" in line or "已验证" in line:
                 verified = True
-        return fact_clues, likely_reports, fail_styles, flag_candidate, verified
+            if "[汇报:submit_fail]" in line:
+                submit_fail = True
+        return fact_clues, likely_reports, fail_styles, flag_candidate, verified, submit_fail
+
+    def _last_report_line(self, style: str) -> str:
+        """从 context 中找某路最近的汇报行 (Sprint 36.5: flag 失败过滤用)."""
+        for line in reversed(self._context[-self.context_window:]):
+            if f"{style}" in line and "[汇报:" in line:
+                return line
+        return ""
 
     def _report_type_of(self, style: str) -> str:
         """从上下文摘要中识别某路最近汇报的 report_type (简版)."""
@@ -813,7 +869,20 @@ class Commander:
             # Sprint 36.2 (2026-08-05 校准): P2→P3 必须先由总指挥**确凿分析**
             # verified 汇报 (证据支撑+验证通过+汇报完整) — 确凿后才切换 P3;
             # 证据不足则保持 P2, 本轮正常分析其余汇报.
+            # Sprint 36.5 (2026-08-06): 若战术层已取得 flag 候选, **跳过 LLM 确凿
+            # 分析直接确认切换** — flag 文本本身是最强验证证据 (强于战略层 LLM 对
+            # 方向的判断). 否则 _format_verified_reports 无 verified 汇报时 LLM 会
+            # 保守拒绝, 阶段卡死在 P2 (nss_2950 根因: agent 已解出但总指挥停在 P2).
             elif self._phase == "P2" and new_phase == "P3":
+                _, _, _, flag_candidate, _, _ = self._collect_phase_signal()
+                if flag_candidate:
+                    self._context.append("[P2 校验] 战术层已取得 flag 候选 (最强验证证据), 确凿切换 P3")
+                    self._trim_context()
+                    self._set_phase("P3")
+                    phase_dirs = self._make_phase_directives()
+                    if phase_dirs:
+                        self.post_directives(phase_dirs, bus=bus)
+                        return phase_dirs
                 verify_dirs = self._p2_verify_direction(bus=bus)
                 if verify_dirs:
                     return verify_dirs
@@ -1108,6 +1177,29 @@ class Commander:
     @property
     def directive_count(self) -> int:
         return self._directive_count
+
+    @property
+    def phase(self) -> str:
+        """当前解题阶段 (P1/P2/P3/P4, 供总指挥循环心跳日志)."""
+        return self._phase
+
+    def heartbeat(self) -> str:
+        """Sprint 36.5: 单行状态心跳 (供总指挥循环定期输出, 让用户看到它在工作).
+
+        内容: 当前阶段 + 汇报跟踪 + 指令数 + 失败 flag 数. 空汇报时也有输出.
+        """
+        styles_state = []
+        for style in self.styles:
+            entry = self._style_reports.get(style) or {}
+            styles_state.append(
+                f"{style}({'recon_done' if entry.get('recon_done') else 'recon'}: "
+                f"{entry.get('last_report') or '未汇报'}"[:60] + ")"
+            )
+        return (
+            f"阶段={self._phase} | 指令={self._directive_count} "
+            f"| 失败flag={len(self._failed_flags)} | "
+            + " ".join(styles_state)
+        )
 
     def summary(self) -> str:
         """当前状态摘要 (供日志/调试)."""

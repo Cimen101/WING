@@ -320,7 +320,7 @@ reports, new_cursor = b.check_reports(self.bus_key, cursor=self._report_cursor)
 
 - 每次 `run_once` 先消费新汇报；**只把 FACT/LIKELY 级汇报的摘要**（≤200 字符）追加进 `_context`，POSSIBLE 汇报仅本次可见不聚合（防误导）。
 - 同时更新 `_style_reports` 跟踪：提取主题词、累计失败信号（dead_end 汇报或内容含"失败/无效/证伪/不可行/无法/failed"）、累计 progress 汇报数、标记 recon_done/verified。
-- 汇报类型六类：`clue`（重要线索）/ `dead_end`（死路确认）/ `question`（提问副本）/ `progress`（P1 侦查进度）/ `recon_done`（P1 侦查完成）/ `verified`（方向验证成功）。
+- 汇报类型八类：`clue`（重要线索）/ `dead_end`（死路确认）/ `question`（提问副本）/ `progress`（P1 侦查进度）/ `recon_done`（P1 侦查完成）/ `verified`（方向验证成功）/ `flag`（flag 候选，战术层解出时实时上报）/ `submit_fail`（提交失败，P4→P3 回退信号）。
 
 ### 4.5 多阶段状态机（_phase_advance_rule）
 
@@ -329,12 +329,18 @@ reports, new_cursor = b.check_reports(self.bus_key, cursor=self._report_cursor)
 | 切换 | 条件（客观汇报信号） | 说明 |
 |------|---------------------|------|
 | P1 → P2 | 三路**全部**汇报 recon_done（战略层 LLM 判断该路基础侦查已覆盖题目全貌） | 不再用"任一 LIKELY 或汇报数≥4"的宽松门槛；切换前必须由 `_p1_synthesize` 整合全局情报摘要并确定主方向 |
-| P2 → P3 | 存在 verified 汇报（方向有证据支撑 + 取得验证） | 切换前必须由 `_p2_verify_direction` LLM 确凿分析；证据不足保持 P2 |
-| P3 → P4 | 汇报含 flag 候选（report_type=flag 或 content 含 flag 模式） | 进入验证提交 |
+| P2 → P3 | 存在 verified 汇报（方向有证据支撑 + 取得验证）**或战术层上报 flag 候选**（Sprint 36.5：flag 文本本身 = 最强验证证据，强于战略层 LLM 对方向的判断） | 通常由 `_p2_verify_direction` LLM 确凿分析；若为 flag 候选信号则跳过 LLM 直接确凿确认（防止无 verified 汇报时 LLM 保守拒绝导致阶段卡死 P2） |
+| P3 → P4 | 汇报含 flag 候选（`report_type=flag`，战术层解出 flag 时实时上报） | 进入验证提交；已提交失败的 flag 不再触发（防 P4→P3→P4 死循环） |
 | P3 → P2 | ≥2 路报告失败/死路（fail_styles ≥ 阈值 2）且无 FACT 成功 | 方向错误回退，**优先于前进** |
-| P4 → P3 | 验证失败（由外部提交结果触发） | 回退继续利用 |
+| P4 → P3 | 提交失败（`report_type=submit_fail`，战术层提交被驳回时实时上报） | 回退继续利用；submit_fail 不计入"方向死路"失败计数 |
 
 阶段切换判定**基于规则（客观事实）而非 LLM 死板判断**；LLM 只负责任务描述生成。`_set_phase` 记录切换日志（含耗时），`run_once` 中切换后广播阶段提示（`_make_phase_directives` 按阶段为每路生成差异化 SHOULD 指令）。
+
+**Sprint 36.5（2026-08-06，用户要求"不能跳 P4，关键是状态切换机的实时切换"）**：
+- **单级推进**：`_phase_advance_rule` 每轮最多切换一级（P1→P2 / P2→P3 / P3→P4），不再 while 连跳——确保每级切换都经过对应确凿环节，从根源杜绝"跳 P4"。
+- **实时切换**：战术层（ReAct）解出 flag 时**提交前实时上报** `report_type=flag`（经 `_coordinator.report_flag_solved`），提交失败时实时上报 `report_type=submit_fail`——阶段信号不再依赖战略层巡查 LLM "恰好"输出 `p2_verified`，解决"agent 已解出但总指挥阶段停在 P2"的断裂（nss_2950 复盘根因）。
+- **失败 flag 防死循环**：`_failed_flags` 集合记录提交失败的 flag，P4→P3 回退后同一 flag 不再触发 P3→P4。
+- **总指挥可见性**：`_commander_loop` 轮询间隔 5s→1.5s；每 15s 输出状态心跳（`cmdr.heartbeat()`：阶段/汇报跟踪/指令数/失败 flag 数）；异常不再静默吞掉（记录 ERROR 日志）。
 
 ### 4.6 主方向与备选方向管理（_update_directions_from_llm）
 
@@ -2161,5 +2167,6 @@ WING-Corvus（渡鸦）── 协作小队（当前最新版）
 | 36.4 | 上下文预算 + 工具强化 | assistant 统一截断回灌、lwe_decode 工具、web_search 合规化、合规搜索规则 |
 | 36.4.2 | 智能上下文压缩 | level 打标 + 实时时间线 + 异步事件驱动动态压缩 + 首次坍塌即压缩 |
 | 36.5 | 学习闭环 + 思路纠偏 | swarm 子进程接入 long_term/mid_term/ingest_solution；LTM embedding 统一 256 维（修复 RAG 静默失效）；压缩器按 step_no 匹配修复裁剪错位；意图级重复检测；交互回显型程序纠偏 + web_search 使用引导；知识库重构：role_guides 全题型分阶段注入（只注入当前阶段）+ skill_curator 接入 solve.py finally（LLM 分阶段提炼 + role_guides/patterns 更新 + traces 归档） |
+| 36.5.1 | 状态切换机实时切换修复 | 战术层解出 flag/提交失败实时上报（flag/submit_fail 两类新汇报，直通总线不依赖战略层巡查）；`_phase_advance_rule` 单级推进防"跳 P4"；P2→P3 支持 flag=最强验证证据（跳过 LLM 确凿分析防卡死 P2）；P4→P3 提交失败回退补齐（`_failed_flags` 防死循环）；总指挥循环心跳日志（1.5s 轮询 + 15s HEART + 异常可见） |
 
 > 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、13.4 镜像、13.5 LWE 工具、13.6 合规搜索；迭代验证记录见 `dev-notes/`。

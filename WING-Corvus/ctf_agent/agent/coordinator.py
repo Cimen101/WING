@@ -748,6 +748,31 @@ class Coordinator:
         return self.report_to_commander(
             report_type="verified", content=" | ".join(parts), level="FACT")
 
+    def report_flag_solved(self, flag: str) -> bool:
+        """Sprint 36.5: 战术层取得 flag 候选时实时上报 — P3→P4 信号.
+
+        由主循环在 Final Answer 提交前调用 (flag 验证通过后). 这是**事实信号**
+        (flag 文本本身), 不依赖战略层巡查 LLM 恰好输出 p2_verified —
+        从根源解决"agent 已解出但总指挥阶段还停在 P2"的断裂 (nss_2950 复盘).
+        总指挥据此: P2→P3 (flag=最强验证证据) → P3→P4 (flag 候选进入验证阶段).
+        """
+        if not self._commander_enabled or not (flag or "").strip():
+            return False
+        return self.report_to_commander(
+            report_type="flag", content=f"flag 候选: {flag.strip()[:200]}", level="FACT")
+
+    def report_submit_fail(self, flag: str, feedback: str = "") -> bool:
+        """Sprint 36.5: 提交失败时实时上报 — P4→P3 回退信号.
+
+        由主循环在 submission 返回失败后调用. 总指挥据此回退 P4→P3
+        (设计文档 4.5 存在但此前未实现), 避免阶段停留在"验证提交"而实际已失败.
+        """
+        if not self._commander_enabled:
+            return False
+        content = f"提交失败: {flag.strip()[:100]} | 反馈: {feedback.strip()[:200]}"
+        return self.report_to_commander(
+            report_type="submit_fail", content=content, level="FACT")
+
     def report_p1_progress_if_due(self, step_no: int, recent_steps: list[dict]) -> bool:
         """Sprint 36.2: P1 阶段每 5 步向总指挥汇报侦查进度 (主循环调用).
 

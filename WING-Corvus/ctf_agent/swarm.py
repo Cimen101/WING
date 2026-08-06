@@ -219,24 +219,47 @@ class SwarmCoordinator:
             return None
 
     def _commander_loop(self, cmdr, bus, bus_key: str, stop_event, on_commander=None) -> None:
-        """总指挥后台轮询: 消费战略层汇报 → LLM 分析 → 下发 directive (异步事件驱动)."""
+        """总指挥后台轮询: 消费战略层汇报 → LLM 分析 → 下发 directive (异步事件驱动).
+
+        Sprint 36.5 (2026-08-06, 用户反馈"总指挥除分工外很少日志"):
+        - 轮询间隔 5s → 1.5s: 汇报→阶段切换→指令下发的实时性 (状态切换机实时切换)
+        - 每 15s 状态心跳 (阶段/汇报跟踪/指令数): 静默轮询也可见总指挥在工作
+        - 异常不再静默吞掉: 记录 ERROR 日志 (异常不影响主流程, 但必须可见可定位)
+        """
+        last_heartbeat = time.monotonic()
         while not stop_event.is_set():
+            directives: list = []
             try:
                 directives = cmdr.run_once(bus=bus)
-                # Sprint 36: 总指挥指令日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
-                if directives and on_commander:
-                    for d in directives:
-                        try:
-                            on_commander(
-                                "CMDR",
-                                f"指令[{d.priority}] {d.style}(任务{d.task_no}): "
-                                f"{d.direction[:120]} — 依据: {d.reason[:80]}",
-                            )
-                        except Exception:
-                            pass
-            except Exception:  # noqa: BLE001 - 总指挥异常不影响主流程
-                pass
-            stop_event.wait(5.0)
+            except Exception as e:  # noqa: BLE001 - 总指挥异常不影响主流程, 但必须记录
+                if on_commander:
+                    try:
+                        on_commander(
+                            "ERROR",
+                            f"总指挥轮询异常: {type(e).__name__}: {str(e)[:150]}",
+                        )
+                    except Exception:
+                        pass
+            # Sprint 36: 总指挥指令日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
+            if directives and on_commander:
+                for d in directives:
+                    try:
+                        on_commander(
+                            "CMDR",
+                            f"指令[{d.priority}] {d.style}(任务{d.task_no}): "
+                            f"{d.direction[:120]} — 依据: {d.reason[:80]}",
+                        )
+                    except Exception:
+                        pass
+            # Sprint 36.5: 状态心跳 (阶段切换/汇报跟踪) — 静默轮询也有可见输出
+            now = time.monotonic()
+            if on_commander and (now - last_heartbeat) >= 15.0:
+                try:
+                    on_commander("HEART", f"总指挥心跳: {cmdr.heartbeat()}")
+                except Exception:
+                    pass
+                last_heartbeat = now
+            stop_event.wait(1.5)
 
     # ---------- 内部 ----------
     def _submit(self, style: str, flag: str) -> tuple[bool, str]:

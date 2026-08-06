@@ -553,6 +553,12 @@ class Coordinator:
         self._directive_cursor: int = 0      # directive 消费游标
         self._dead_end_switched: bool = False
         self._tool_unavailable: dict[str, int] = {}  # 工具连续不可用计数 (死路检测)
+        # Sprint 36.5.2: 任务完成闭环 — 当前任务完成后置位, 等待总指挥新任务下发
+        # (抑制空转重复上报; 收到新 directive 后重置)
+        self._task_done: bool = False
+        # Sprint 36.5.2: 当前任务的禁忌 (随 directive 下发, 新任务覆盖旧任务禁忌;
+        # 本地自增禁忌如死路/死循环签名不在此列, 保留)
+        self._task_forbidden: list[str] = []
 
     def should_check(self, step_no: int, max_steps: int = 0, live_errors: int = -1) -> bool:
         """是否到了巡查发起时机 (Sprint 33 异步事件驱动版).
@@ -723,12 +729,16 @@ class Coordinator:
 
         由战略层巡查分析 (LLM 判断该路基础侦查已覆盖题目全貌) 触发;
         summary 为该路侦查成果一句话摘要 (供总指挥全局情报摘要使用).
+        Sprint 36.5.2: 完成后置"任务完成等待"状态 — 等待总指挥新任务 (单路先行/全局广播).
         """
         if not self._commander_enabled:
             return False
         content = f"P1 侦查完成: {summary.strip()[:300]}" if summary.strip() else "P1 侦查完成"
-        return self.report_to_commander(
+        ok = self.report_to_commander(
             report_type="recon_done", content=content, level="FACT")
+        if ok:
+            self._task_done = True
+        return ok
 
     def report_verified(self, direction: str = "", evidence: str = "") -> bool:
         """Sprint 36.2: 汇报某方向已验证成功 (证据支撑 + 验证通过) — P2→P3 信号.
@@ -745,8 +755,11 @@ class Coordinator:
             parts.append(f"验证证据: {evidence.strip()[:300]}")
         if not parts:
             return False
-        return self.report_to_commander(
+        ok = self.report_to_commander(
             report_type="verified", content=" | ".join(parts), level="FACT")
+        if ok:
+            self._task_done = True  # Sprint 36.5.2: P2 任务完成 → 等待总指挥确认切换 P3
+        return ok
 
     def report_flag_solved(self, flag: str) -> bool:
         """Sprint 36.5: 战术层取得 flag 候选时实时上报 — P3→P4 信号.
@@ -772,6 +785,47 @@ class Coordinator:
         content = f"提交失败: {flag.strip()[:100]} | 反馈: {feedback.strip()[:200]}"
         return self.report_to_commander(
             report_type="submit_fail", content=content, level="FACT")
+
+    def report_task_done(self, summary: str = "") -> bool:
+        """Sprint 36.5.2: 汇报当前任务完成 (通用信号) — 完成后进入等待新任务状态.
+
+        由战略层巡查判断当前任务契约目标已达成时触发 (P1 侦查完成已有 recon_done,
+        P2 验证完成已有 verified, P3 取得 flag 已有 flag 汇报 — 此方法用于其他
+        明确的任务完成场景). 总指挥据此分配新任务 (含单路先行), 该路等待新任务下发.
+        """
+        if not self._commander_enabled:
+            return False
+        ok = self.report_to_commander(
+            report_type="task_done",
+            content=f"任务完成: {summary.strip()[:300]}" if summary.strip() else "任务完成",
+            level="FACT",
+        )
+        if ok:
+            self._task_done = True
+        return ok
+
+    def _apply_task_forbidden(self, forbidden: list[str]) -> None:
+        """Sprint 36.5.2: 新任务禁忌合并 — 先移除旧任务禁忌, 再合并新禁忌.
+
+        本地自增禁忌 (死路/死循环签名等) 保留不受影响; 只有任务禁忌随任务切换替换.
+        """
+        if not forbidden:
+            return
+        new_list = [str(f).strip() for f in forbidden if str(f).strip()]
+        if not new_list:
+            return
+        with self._lock:
+            for old in self._task_forbidden:
+                if old in self._forbidden_actions:
+                    self._forbidden_actions.remove(old)
+            for f in new_list:
+                if f and f not in self._forbidden_actions:
+                    self._forbidden_actions.append(f)
+            self._task_forbidden = new_list
+
+    def task_done_pending(self) -> bool:
+        """Sprint 36.5.2: 当前任务是否已完成且等待总指挥新任务 (主循环检查用)."""
+        return self._task_done
 
     def report_p1_progress_if_due(self, step_no: int, recent_steps: list[dict]) -> bool:
         """Sprint 36.2: P1 阶段每 5 步向总指挥汇报侦查进度 (主循环调用).
@@ -882,6 +936,10 @@ class Coordinator:
                       f"(已降级为 SHOULD, 以本地证据为准, 已回报总指挥)")
 
         self.set_task_contract(task_no, direction, priority)
+        # Sprint 36.5.2: 新任务禁忌合并 (覆盖旧任务禁忌) + 重置"任务完成等待"状态 —
+        # 收到新 directive 表示总指挥已下发新任务, 该路继续执行新任务.
+        self._apply_task_forbidden(d.get("forbidden") or [])
+        self._task_done = False
         guidance_text = f"[总指挥·任务{task_no}] {direction}"
         if reason:
             guidance_text += f"\n[依据] {reason}"

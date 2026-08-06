@@ -205,7 +205,8 @@ class FileBus:
 
     def post_directive(self, agent_id: str, task_id: str, content: str,
                        task_no: int = 0, priority: str = "SHOULD",
-                       reason: str = "", phase: str = "") -> int:
+                       reason: str = "", phase: str = "",
+                       forbidden: list[str] | None = None) -> int:
         """总指挥向指定战略层下发方向指令. 返回 seq.
 
         Args:
@@ -214,6 +215,8 @@ class FileBus:
             priority: "MUST" 必须执行 | "SHOULD" 方向性建议 (默认, 非强制枷锁)
             reason: 指令依据 (总指挥 LLM 的推理, 引用汇报证据)
             phase: Sprint 36.2 当前解题阶段 (P1/P2/P3/P4, 供战略层感知阶段注入任务)
+            forbidden: Sprint 36.5.2 任务禁忌列表 (针对任务+当前阶段的约束,
+                       战略层合并进本地禁忌拦截; 单路先行时禁忌"稍微放松")
         """
         if not content or not content.strip():
             raise ValueError("content 不能为空")
@@ -222,6 +225,7 @@ class FileBus:
             "content": content[:500], "kind": "directive",
             "priority": priority, "task_no": int(task_no or 0),
             "reason": reason[:300], "phase": str(phase or ""),
+            "forbidden": [str(f)[:200] for f in (forbidden or [])][:8],
         })
 
     def check_directives(self, task_id: str, agent_id: str | None = None,

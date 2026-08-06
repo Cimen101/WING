@@ -81,6 +81,7 @@ class TaskAssignment:
     style: str
     task: str
     rationale: str = ""
+    forbidden: list[str] = field(default_factory=list)  # Sprint 36.5.2: 任务禁忌 (阶段约束)
 
 
 @dataclass
@@ -92,6 +93,7 @@ class CommanderDirective:
     task_no: int = 0
     priority: str = "SHOULD"  # MUST = 明确方向错误/死路; SHOULD = 方向性建议 (默认)
     reason: str = ""
+    forbidden: list[str] = field(default_factory=list)  # Sprint 36.5.2: 任务禁忌 (针对任务+阶段)
 
 
 class Commander:
@@ -157,6 +159,11 @@ class Commander:
         self._phase_p3_fail_threshold = 2   # P3→P2: 多路连续失败数 (激进+保守均报告失败)
         # Sprint 36.5: 已提交失败的 flag 集合 (P4→P3 回退后防止同一 flag 反复触发 P3→P4)
         self._failed_flags: set[str] = set()
+        # Sprint 36.5.2: P1 侦查限时 (秒, 1-2 分钟内; 领题时 LLM 按任务量/难度定制,
+        # 默认按难度兜底 easy=60/medium=90/hard=120). 仅 P1 有效, 其他阶段不设限时.
+        self._p1_timeout_secs: int = 90
+        # Sprint 36.5.2: 单路先行记录 {style: 先行到的阶段} (P1 完成的路单独下发下一阶段任务)
+        self._solo_advanced: dict[str, str] = {}
 
     # ---------- 领题: 任务分解与分工 ----------
 
@@ -187,8 +194,18 @@ class Commander:
         if kb_block:
             user_prompt += kb_block
         obj = self._llm_json(
-            [_COMMANDER_SYSTEM_PROMPT, user_prompt], max_tokens=600, tag="assign"
+            [_COMMANDER_SYSTEM_PROMPT, user_prompt], max_tokens=800, tag="assign"
         )
+        # Sprint 36.5.2: P1 侦查限时 (LLM 按任务量/难度定制, 60~120; 非法值用难度兜底)
+        if obj:
+            try:
+                raw = int(obj.get("p1_timeout_secs") or 0)
+                if 60 <= raw <= 120:
+                    self._p1_timeout_secs = raw
+            except (TypeError, ValueError):
+                pass
+        if self._p1_timeout_secs <= 0:
+            self._p1_timeout_secs = self._default_p1_timeout()
         assignments: list[TaskAssignment] = []
         if obj and isinstance(obj.get("assignments"), list):
             for i, a in enumerate(obj["assignments"]):
@@ -196,6 +213,11 @@ class Commander:
                 task = str(a.get("task") or "").strip()
                 if not style or style not in self.styles or not task:
                     continue
+                # 任务禁忌: LLM 输出优先, 缺失时用阶段模板兜底
+                fbd = [str(f).strip() for f in (a.get("forbidden") or [])
+                       if str(f).strip()]
+                if not fbd:
+                    fbd = self._phase_forbidden("P1")
                 # 任务契约编号统一按顺序递增 (忽略 LLM 输出, 保证唯一性,
                 # 战略层以 task_no 识别当前任务契约)
                 assignment = TaskAssignment(
@@ -203,6 +225,7 @@ class Commander:
                     style=style,
                     task=task,
                     rationale=str(a.get("rationale") or "")[:200],
+                    forbidden=fbd[:8],
                 )
                 self._assignments[style] = assignment
                 assignments.append(assignment)
@@ -215,6 +238,7 @@ class Commander:
                     style=style,
                     task=self._default_task(style),
                     rationale="LLM 未分配, 默认方向兜底",
+                    forbidden=self._phase_forbidden("P1"),
                 ))
         # 统一按 styles 顺序分配 task_no (唯一且稳定, 战略层以 task_no 识别契约)
         ordered = {a.style: a for a in assignments}
@@ -243,6 +267,61 @@ class Commander:
             "aggressive": "主攻动态验证: 运行观察/调试/快速试错, 定位核心逻辑",
             "innovative": "主攻非常规路径: 符号执行/代数闭式解/侧信道/线索交叉",
         }.get(style, f"按 {style} 风格探索解题路径")
+
+    # ---------- Sprint 36.5.2: 阶段禁忌 + P1 限时 (用户规范 2026-08-06) ----------
+
+    def _phase_forbidden(self, phase: str, relaxed: bool = False) -> list[str]:
+        """当前阶段的任务禁忌模板 (严格限定子解题器方向).
+
+        relaxed=True 表示单路先行: 禁忌"稍微放松" — 允许提前进入下一阶段该做的动作,
+        但仍保留防越界底线 (如禁止提交未验证 flag).
+        """
+        base = {
+            "P1": [
+                "不要深入利用漏洞或构造完整 exploit (侦查阶段以信息收集为主)",
+                "不要提交 flag 或给出 Final Answer (尚未完成侦查)",
+                "不要偏离分配给自己的侦查方向 (三路方向互斥分工)",
+                "每 5 步向总指挥汇报侦查进度 (发现/下一步/是否卡死)",
+            ],
+            "P2": [
+                "不要提交猜测的 flag (方向未验证不得提交)",
+                "不要放弃主方向 (除非有确凿证伪证据)",
+                "验证用最小 payload, 不要花费过多步数在细节打磨",
+            ],
+            "P3": [
+                "不要回到侦查阶段 (方向已验证, 聚焦利用)",
+                "不要提交未经验证的 flag (flag 必须来自工具观测)",
+                "利用失败快速换子方向, 不要停止尝试",
+            ],
+            "P4": [
+                "仅验证 flag 合法性并提交, 不要尝试其他方向",
+                "验证失败立即上报, 等待回退指令",
+            ],
+        }.get(phase)
+        if base is None:
+            return []
+        if not relaxed:
+            return list(base)
+        # 单路先行: 允许提前进入下一阶段该做的动作, 仅保留防越界底线
+        return {
+            "P1": [  # P1 完成 → P2 先行: 允许验证, 仍禁提交
+                "不要提交 flag (方向验证前禁止提交)",
+                "不要放弃当前已完成的侦查结论",
+            ],
+            "P2": [  # P2 完成 → P3 先行: 允许利用, 禁回退侦查
+                "不要回到侦查阶段",
+                "flag 必须来自真实工具观测 (防幻觉)",
+            ],
+        }.get(phase, list(base))
+
+    def _default_p1_timeout(self) -> int:
+        """P1 侦查限时兜底 (秒): 按难度 — easy 60 / medium 90 / hard 120 (均在 1-2 分钟内)."""
+        d = (self.challenge_difficulty or "").lower()
+        if "easy" in d or "简单" in d:
+            return 60
+        if "hard" in d or "困难" in d or "extreme" in d:
+            return 120
+        return 90
 
     # ---------- 汇报消费 ----------
 
@@ -408,10 +487,12 @@ class Commander:
             # 2026-08-05 校准: 不再用"任一 progress 即算完成" — 战略层 LLM 判断
             # 该路基础侦查已覆盖题目全貌 (recon_done) 才算完成; 全部完成后由
             # run_once 触发全局情报摘要整合 + 主方向确定, 之后才正式进入 P2.
+            # Sprint 36.5.2 (用户规范 2026-08-06): P1 严格限时 (1-2 分钟内) —
+            # 达到限时即使未全部 recon_done 也强制推进 (仅 P1 有超时, 其他阶段不设限时).
             all_done = all(
                 entry.get("recon_done") for entry in self._style_reports.values()
             ) and len(self._style_reports) >= len(self.styles)
-            if all_done:
+            if all_done or self._p1_expired():
                 return "P2"
         elif cur == "P2" and (verified or flag_candidate):
             # P2→P3: 方向已验证 (verified 汇报) 或战术层已取得 flag 候选 —
@@ -433,6 +514,105 @@ class Commander:
                 continue
             for m in re.finditer(r"[A-Za-z0-9_]+\{[^{}]{4,}\}", line):
                 self._failed_flags.add(m.group(0))
+
+    def _p1_expired(self) -> bool:
+        """P1 侦查是否超过限时 (Sprint 36.5.2: 仅 P1 有效, 1-2 分钟内强制推进)."""
+        return (time.time() - self._phase_enter_ts) > self._p1_timeout_secs
+
+    # ---------- Sprint 36.5.2: P1 单路先行 (用户规范 2026-08-06) ----------
+
+    def _solo_task(self, style: str, target: str, summary: str) -> str:
+        """单路先行任务: 基于该路自己的侦查成果生成下一阶段任务 (不依赖全局主方向)."""
+        base = {
+            "P2": {
+                "conservative": "深入验证你侦查发现的方向, 稳步推进 (每步充分验证) — 基于: ",
+                "aggressive": "快速深入你侦查发现的方向, 快速验证漏洞存在性 — 基于: ",
+                "innovative": "发散探索你侦查中发现的可能方向, 浅层搜集线索并汇报 — 基于: ",
+            },
+            "P3": {
+                "conservative": "基于已验证方向严谨利用, 构造 exploit 获取 flag — 已验证方向: ",
+                "aggressive": "基于已验证方向快速利用, 快速迭代逼近 flag — 已验证方向: ",
+                "innovative": "基于已验证方向尝试创造性利用 (侧信道/竞态/替代路径) — 已验证方向: ",
+            },
+        }
+        prefix = base.get(target, {}).get(style, "") or f"进入 {target} 阶段: "
+        return (prefix + (summary or "")).strip()
+
+    def _build_solo_directive(self, style: str, target: str) -> CommanderDirective | None:
+        """构造并**单独 post** 单路先行指令 (phase=目标阶段, 禁忌放松, 仅该路)."""
+        entry = self._style_reports.get(style) or {}
+        summary = (entry.get("recon_done_summary") or entry.get("last_report") or "")[:200]
+        task = self._solo_task(style, target, summary)
+        cur = self._assignments.get(style)
+        task_no = cur.task_no if cur else 0
+        # 先行阶段禁忌"稍微放松": P2 先行允许构造验证 payload (仍禁提交); P3 先行允许利用
+        forbidden = self._phase_forbidden("P1", relaxed=True) if target == "P2" \
+            else self._phase_forbidden("P2", relaxed=True)
+        self._solo_advanced[style] = target
+        self._context.append(f"[单路先行] {style} → {target} (P1 侦查完成, 不等待其他路)")
+        self._trim_context()
+        d = CommanderDirective(
+            style=style, direction=task, task_no=task_no, priority="SHOULD",
+            reason=f"单路先行: 该路已完成 P1 侦查, 提前进入 {target} (不等待其他路)",
+            forbidden=forbidden,
+        )
+        if cur is not None:
+            cur.task = task
+        self._directive_count += 1
+        b = self.bus
+        if b is not None:
+            try:
+                b.post_directive(
+                    agent_id=style, task_id=self.bus_key, content=task,
+                    task_no=task_no, priority="SHOULD",
+                    reason=f"单路先行: 该路已完成 P1 侦查, 提前进入 {target} (不等待其他路)",
+                    phase=target, forbidden=forbidden,
+                )
+            except Exception:
+                pass
+        return d
+
+    def _try_solo_advance(self) -> list[CommanderDirective]:
+        """Sprint 36.5.2: P1 单路先行检测与下发 (仅 P1 阶段).
+
+        规则 (用户规范 2026-08-06):
+        - 某路新完成 P1 侦查 (recon_done) 且全局仍 P1 → 单独下发该路下一阶段任务:
+          该路侦查已含 flag 候选 → 直接 P3 先行 (P1 直接跳 P3); 否则 P2 先行.
+        - 已先行 P2 的路又满足 P3 条件 (verified/flag 汇报) → 升级为 P3 先行.
+        - 其他路仍按 P1 任务执行, 全局阶段不变 (只有全部完成或超时才全局切换).
+        返回本次下发的指令 (无则 []).
+        """
+        if self._phase != "P1":
+            return []
+        # 全部路已完成侦查 → 走全局 P1→P2 (整合全局情报摘要+主方向), 不再单路先行
+        # (否则最后一轮的先行指令会截断全局切换的 run_once 流程).
+        all_done = all(
+            entry.get("recon_done") for entry in self._style_reports.values()
+        ) and len(self._style_reports) >= len(self.styles)
+        if all_done:
+            return []
+        dirs: list[CommanderDirective] = []
+        for style in self.styles:
+            entry = self._style_reports.get(style) or {}
+            if not entry.get("recon_done"):
+                continue
+            current = self._solo_advanced.get(style)
+            if current == "P3":
+                continue  # 已先行 P3, 无需再升级
+            if current == "P2":
+                # 已先行 P2 → 该路最近汇报 verified/flag → 升级 P3 先行
+                if self._report_type_of(style) not in ("verified", "flag"):
+                    continue
+                d = self._build_solo_directive(style, "P3")
+                if d:
+                    dirs.append(d)
+                continue
+            # 未先行 → 侦查内容含 flag 候选直接 P3, 否则 P2
+            has_flag = self._line_has_new_flag(entry.get("recon_done_summary") or "")
+            d = self._build_solo_directive(style, "P3" if has_flag else "P2")
+            if d:
+                dirs.append(d)
+        return dirs
 
     def _p1_synthesize(self, bus: Any = None) -> list[CommanderDirective]:
         """Sprint 36.2 (WING-Corvus P1): 三路侦查全部完成 → 整合全局情报摘要 + 确定主方向.
@@ -485,6 +665,10 @@ class Commander:
                           "任何单一方向; 经总指挥允许后才可深入",
         }
         for style in self.styles:
+            # Sprint 36.5.2: 已单路先行的路跳过全局 P2 广播 — 其任务已是更高阶段
+            # (先行 P2/P3), 全局广播 P2 会把该路拉回 P2 (阶段回退).
+            if style in self._solo_advanced:
+                continue
             task = p2_tasks.get(style)
             if not task:
                 continue
@@ -616,11 +800,13 @@ class Commander:
 
         Sprint 36.5: P3→P4 需要 flag 候选, 但已提交失败 (P4→P3 回退) 的 flag
         不得再触发 P3→P4 — 防止同一错误 flag 造成 P4→P3→P4 死循环.
+        Sprint 36.5.2: 直接按 flag 格式正则匹配 (不依赖关键词预检, 避免漏检
+        suctf{xxx}/moectf{xxx} 等非 NSSCTF 格式的真实 flag 文本).
         """
-        if not ("flag{" in line or "候选flag" in line or "flag 候选" in line or "[汇报:flag]" in line):
+        m = re.search(r"[A-Za-z0-9_]+\{[^{}]{4,}\}", line or "")
+        if not m:
             return False
-        m = re.search(r"[A-Za-z0-9_]+\{[^{}]{4,}\}", line)
-        return not (m and m.group(0) in self._failed_flags)
+        return m.group(0) not in self._failed_flags
 
     def _collect_phase_signal(self) -> tuple[int, int, set[str], bool, bool, bool]:
         """汇总阶段切换信号: (FACT clue 数, LIKELY 汇报数, 失败风格集, flag 候选, 方向验证信号, 提交失败信号)."""
@@ -769,14 +955,20 @@ class Commander:
         return directives
 
     def _make_directive(self, style: str, direction: str, priority: str = "SHOULD",
-                        reason: str = "") -> CommanderDirective | None:
-        """构造 directive (并更新任务契约), 供规则检测直接产出."""
+                        reason: str = "", forbidden: list[str] | None = None) -> CommanderDirective | None:
+        """构造 directive (并更新任务契约), 供规则检测直接产出.
+
+        Sprint 36.5.2: 默认附带当前阶段的任务禁忌 (严格限定子解题器方向).
+        """
         if not style or style not in self.styles or not direction:
             return None
         cur = self._assignments.get(style)
         task_no = cur.task_no if cur else 0
+        if forbidden is None:
+            forbidden = self._phase_forbidden(self._phase)
         d = CommanderDirective(style=style, direction=direction,
-                               task_no=task_no, priority=priority, reason=reason)
+                               task_no=task_no, priority=priority, reason=reason,
+                               forbidden=list(forbidden))
         if cur is not None:
             cur.task = direction
         self._directive_count += 1
@@ -855,8 +1047,24 @@ class Commander:
         判断是否干预及优先级. 阶段切换仍为规则驱动 (进度/验证信号是客观事实).
         """
         reports = self.consume_reports(bus)
+        # Sprint 36.5.2: P1 限时兜底 (仅 P1 有效, 1-2 分钟内) — 无新汇报也要检查,
+        # 防止某路不汇报/汇报稀疏导致 P1 无限等待 (用户规范: 侦查必须快速建立完整画像).
+        if self._phase == "P1" and self._p1_expired():
+            new_phase = self._phase_advance_rule()
+            if new_phase == "P2":
+                self._context.append(
+                    f"[P1 限时] 侦查超时 ({self._p1_timeout_secs}s), 用已有侦查强制整合全局情报进入 P2")
+                self._trim_context()
+                summary_dirs = self._p1_synthesize(bus=bus)
+                if summary_dirs:
+                    return summary_dirs
         if not reports:
             return []
+        # Sprint 36.5.2: P1 单路先行 — 某路完成侦查后单独下发下一阶段任务 (不等待其他路),
+        # 该路不空转; 若侦查已含 flag 候选 → 直接 P3 先行 (P1 直接跳 P3).
+        solo_dirs = self._try_solo_advance()
+        if solo_dirs:
+            return solo_dirs
         # 1. 阶段状态机: 规则判定切换 (基于客观汇报信号: 三路完成侦查 / 方向验证)
         new_phase = self._phase_advance_rule()
         if new_phase != self._phase:
@@ -1075,6 +1283,7 @@ class Commander:
                 task_no=task_no,
                 priority=priority,
                 reason=reason,
+                forbidden=self._phase_forbidden(self._phase),  # Sprint 36.5.2: 任务禁忌
             )
             # 更新任务契约 (重定向 = 更新该路任务方向)
             if cur is not None:
@@ -1106,6 +1315,7 @@ class Commander:
                     priority=d.priority,
                     reason=d.reason,
                     phase=self._phase,  # Sprint 36.2: 附带当前阶段, 供战略层感知注入任务
+                    forbidden=d.forbidden,  # Sprint 36.5.2: 任务禁忌
                 ))
             except Exception:
                 continue
@@ -1187,16 +1397,20 @@ class Commander:
         """Sprint 36.5: 单行状态心跳 (供总指挥循环定期输出, 让用户看到它在工作).
 
         内容: 当前阶段 + 汇报跟踪 + 指令数 + 失败 flag 数. 空汇报时也有输出.
+        Sprint 36.5.2: 增加单路先行标记 (先行P2/P3) 与 P1 限时.
         """
         styles_state = []
         for style in self.styles:
             entry = self._style_reports.get(style) or {}
+            solo = self._solo_advanced.get(style, "")
+            solo_tag = f"/先行{solo}" if solo else ""
             styles_state.append(
-                f"{style}({'recon_done' if entry.get('recon_done') else 'recon'}: "
+                f"{style}({'recon_done' if entry.get('recon_done') else 'recon'}{solo_tag}: "
                 f"{entry.get('last_report') or '未汇报'}"[:60] + ")"
             )
+        p1_info = f" P1限时={self._p1_timeout_secs}s" if self._phase == "P1" else ""
         return (
-            f"阶段={self._phase} | 指令={self._directive_count} "
+            f"阶段={self._phase}{p1_info} | 指令={self._directive_count} "
             f"| 失败flag={len(self._failed_flags)} | "
             + " ".join(styles_state)
         )

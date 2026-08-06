@@ -342,6 +342,12 @@ reports, new_cursor = b.check_reports(self.bus_key, cursor=self._report_cursor)
 - **失败 flag 防死循环**：`_failed_flags` 集合记录提交失败的 flag，P4→P3 回退后同一 flag 不再触发 P3→P4。
 - **总指挥可见性**：`_commander_loop` 轮询间隔 5s→1.5s；每 15s 输出状态心跳（`cmdr.heartbeat()`：阶段/汇报跟踪/指令数/失败 flag 数）；异常不再静默吞掉（记录 ERROR 日志）。
 
+**Sprint 36.5.2（2026-08-06，用户规范——严格落实 docs/阶段式协调.md，仅 P1 任务驱动）**：
+- **任务禁忌**：directive 协议新增 `forbidden` 字段；总指挥按阶段生成禁忌模板 `_phase_forbidden(phase)`（P1 禁深入利用/禁提交 flag、P2 禁猜提交/禁弃主方向、P3 禁回侦查、P4 仅验证），随领题分工/阶段广播/重定向下发；战略层 `_apply_task_forbidden` 合并进本地禁忌（新任务覆盖旧任务禁忌，本地死路禁忌保留）。
+- **任务完成闭环**：战略层完成任务后上报并置"等待新任务"状态（`_task_done`），战术层每 3 步注入等待提示（抑制空转重复上报/自行发散）；收到新 directive 自动重置。
+- **P1 单路先行**（仅 P1 有效）：某路完成侦查（recon_done）且其他路未完成 → 该路**不等待**，总指挥单独下发 P2 先行任务（phase=P2 标记仅该路、禁忌"稍微放松"）；若该路侦查已含 flag 候选 → 直接 P3 先行（P1 直接跳 P3）；已先行 P2 的路满足 P3 条件（verified/flag）→ 升级 P3 先行。**全局阶段不变**，只有全部完成或 P1 限时才全局切换。全局 P1→P2 广播跳过已先行路（不回退）。
+- **P1 严格限时**（仅 P1 有超时，P2/P3/P4 不设限时）：领题时总指挥 LLM 按任务量/难度输出 `p1_timeout_secs`（60~120s，默认按难度兜底 easy 60/medium 90/hard 120）；达到限时即使未全部 recon_done，也用已有侦查强制整合全局情报进入 P2（侦查目标"够用即可"）。
+
 ### 4.6 主方向与备选方向管理（_update_directions_from_llm）
 
 **主方向修改仅两种途径**（核心设计约束）：
@@ -2168,5 +2174,6 @@ WING-Corvus（渡鸦）── 协作小队（当前最新版）
 | 36.4.2 | 智能上下文压缩 | level 打标 + 实时时间线 + 异步事件驱动动态压缩 + 首次坍塌即压缩 |
 | 36.5 | 学习闭环 + 思路纠偏 | swarm 子进程接入 long_term/mid_term/ingest_solution；LTM embedding 统一 256 维（修复 RAG 静默失效）；压缩器按 step_no 匹配修复裁剪错位；意图级重复检测；交互回显型程序纠偏 + web_search 使用引导；知识库重构：role_guides 全题型分阶段注入（只注入当前阶段）+ skill_curator 接入 solve.py finally（LLM 分阶段提炼 + role_guides/patterns 更新 + traces 归档） |
 | 36.5.1 | 状态切换机实时切换修复 | 战术层解出 flag/提交失败实时上报（flag/submit_fail 两类新汇报，直通总线不依赖战略层巡查）；`_phase_advance_rule` 单级推进防"跳 P4"；P2→P3 支持 flag=最强验证证据（跳过 LLM 确凿分析防卡死 P2）；P4→P3 提交失败回退补齐（`_failed_flags` 防死循环）；总指挥循环心跳日志（1.5s 轮询 + 15s HEART + 异常可见） |
+| 36.5.2 | 单路先行 + 任务禁忌 + P1 限时 | 严格落实 docs/阶段式协调.md：directive 新增 forbidden（任务禁忌按阶段模板）；任务完成闭环（`_task_done` 等待新任务抑制空转）；P1 单路先行（完成侦查的路单独下发 P2 先行任务/含 flag 直接 P3 先行/先行 P2 满足条件升级 P3，全局阶段不变）；P1 严格限时 60-120s（LLM 定制+难度兜底，仅 P1 有超时，P2/P3/P4 按文档切换不设限时）；全局 P1→P2 广播跳过先行路 |
 
 > 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、13.4 镜像、13.5 LWE 工具、13.6 合规搜索；迭代验证记录见 `dev-notes/`。

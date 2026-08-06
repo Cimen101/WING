@@ -189,11 +189,12 @@ class SwarmCoordinator:
                 return None
             # 初始任务契约 → 每条 post_directive (战略层首步 check 读取, 统一走总线协议)
             # Sprint 36.2: 领题即 P1 侦查阶段 (阶段信息随指令下发给战略层)
+            # Sprint 36.5.2: 附带任务禁忌 (P1 阶段约束, 严格限定子解题器方向)
             for a in assignments:
                 bus.post_directive(
                     agent_id=a.style, task_id=bus_key, content=a.task,
                     task_no=a.task_no, priority="SHOULD", reason="领题分工",
-                    phase="P1",
+                    phase="P1", forbidden=getattr(a, "forbidden", None) or [],
                 )
             # Sprint 36: 领题分工日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
             if on_commander:

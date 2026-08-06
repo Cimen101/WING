@@ -825,6 +825,24 @@ class ReActEngine:
                 except Exception:
                     pass  # 总指挥指令异常不影响主流程
 
+            # Sprint 36.5.2: 任务完成等待提示 — 当前任务目标已达成 (recon_done/verified 等
+            # 完成信号) 且尚未收到总指挥新任务指令: 抑制空转 (重复上报/自行发散到无关方向),
+            # 等待总指挥下发新任务 (单路先行/全局广播, 一般很快到达). 每 3 步注入一次防刷屏.
+            if self._coordinator is not None and getattr(
+                self._coordinator, "_commander_enabled", False
+            ):
+                try:
+                    if (self._coordinator.task_done_pending()
+                            and step_no - getattr(self, "_task_done_wait_step", -10) >= 3):
+                        self._task_done_wait_step = step_no
+                        memory.add_user_message(
+                            "[任务完成·等待新任务] 你当前的任务目标已达成, 正在等待总指挥下发新任务.\n"
+                            "此期间: ①不要重复执行已完成的任务动作; ②不要空转重复上报相同内容; "
+                            "③不要自行发散到无关方向. 总指挥新任务指令很快到达, 到达后立即执行."
+                        )
+                except Exception:
+                    pass  # 等待提示异常不影响主流程
+
             # Sprint 36.2 (WING-Corvus P1): P1 侦查阶段每 5 步向总指挥汇报进度
             # (当前发现/下一步计划/是否卡死). 总指挥据此监控三路侦查进度:
             # - 某路长时间无进展 → 介入调整

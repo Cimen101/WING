@@ -4,6 +4,18 @@
 - 版本：WING-Corvus（总指挥协作小队）
 - 测试目的：WING-Corvus 大幅迭代后的首次完整能力验证
 
+## 题目来源与信息
+
+| 项 | 值 |
+| :-- | :-- |
+| 比赛来源 | SUCTF 2026 |
+| 题目 | SU_RSA（crypto） |
+| 难度 | hard |
+| 题型机制 | 1024 位 RSA，小私钥指数 d≈N^0.33（超出 Wiener 界）；题目给出 p+q 高位提示 S |
+| 附件 | SU_RSA.py（N / e / c / S 参数） |
+| 攻击模型 | 小 d + 已知 p+q 高位 → 格攻击（Herrmann-May / Coppersmith 类） |
+| flag 格式 | SUCTF{...} |
+
 ## 一、测试配置
 
 | 项 | 值 |
@@ -31,7 +43,24 @@ flag: SUCTF{...}（与官方 writeup 一致）
 
 解出的 flag 与官方 writeup 一致，且通过数学验证（确定性验真，非猜测）。
 
-## 三、验证链路
+## 三、轨迹摘要（时间线）
+
+```
+T+0s      启动 WING-Corvus swarm（3 路 + 总指挥 + 数学 flag 验证）
+T+~5s     总指挥下发 3 条 P1 侦查分工指令
+          - conservative → 系统解析题目脚本与公开参数
+          - aggressive   → 直接试跑经典小私钥指数攻击
+          - innovative   → 探索非常规信息源
+T+~90s    aggressive 尝试 Wiener 连分数 → 失败（符合预期，d≈N^0.33 超出 Wiener 界）
+T+~100s   innovative 开始 Herrmann-May 格攻击实现（多次迭代调整格参数）
+T+~200s   conservative 使用内置 RSA 攻击工具，进入恢复私钥阶段
+T+~500s   conservative 完成私钥恢复并解密出明文 flag
+T+~540s   conservative 提交 flag → 数学验证通过（pow(m,e,N)==c）→ 判定真实
+T+~545s   兄弟 kill 生效：aggressive / innovative 被终止
+T+~637s   swarm 汇总：solved=True, winner=conservative
+```
+
+## 四、验证链路
 
 1. **总指挥领题分工**：启动后总指挥按题目特征下发 3 条 P1 侦查指令
    （conservative=系统解析参数；aggressive=直接试跑经典攻击；innovative=探索非常规信息源）。
@@ -48,7 +77,7 @@ flag: SUCTF{...}（与官方 writeup 一致）
 | 单 agent 模式曾出现假 flag 幻觉（5 步内判定 success=true） | 假阳性 | 已修复（见 `../updates/2026-08-05-flag-verify-fix.md`） |
 | swarm 汇总中非胜出路 steps/tokens 显示为 0 | 统计展示不完整 | 观察中（不影响解题） |
 
-## 五、结论
+## 六、结论
 
 - WING-Corvus 完整模式（总指挥 + 三路协作 + 数学验证）全链路可用。
 - 对 crypto/hard 题具备真实解题能力，且能防止幻觉 flag。

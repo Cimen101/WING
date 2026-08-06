@@ -3,6 +3,19 @@
 - 日期：2026-08-06
 - 内容为公开可发布的测试摘要（时间线 + 统计），原始轨迹保留在本地
 
+## 题目来源与信息
+
+| 项 | 值 |
+| :-- | :-- |
+| 比赛来源 | Google CTF 2025 资格赛（quals） |
+| 题目 | filtermaze（crypto） |
+| 难度 | hard |
+| 题型机制 | 哈密顿路径前缀预言（check_path）+ LWE（b = A·s + e mod q） |
+| 关键参数 | LWE n=50 / m=100 / q=1009；误差向量分量绝对值 \|e\| 全部泄露 |
+| 附件 | filtermaze.py / graph.json / lwe_pub_params.json |
+| 服务 | 远程 nc：check_path（前缀预言 + 完整路径返回 \|e\|）/ get_flag（提交 s） |
+| flag 格式 | CTF{...} |
+
 ## 测试目标
 
 验证三项升级在真实 hard 题上的端到端效果：
@@ -21,18 +34,20 @@
 | tokens | 4,001,723（熔断 4M 上限） | 506,617 |
 | 格式错误 | 尾部连续空输出（坍塌） | 0 |
 
-## 通过路线（12 步）
+## 轨迹摘要（通过轮 12 步）
 
 ```
-step 1-3   读取附件源码，梳理 check_path 前缀预言协议与 LWE 参数
-step 4     尝试自行探测秘密路径（脚本报错 1 次，快速放弃）
-step 5     复用兄弟 agent 通过总线共享的哈密顿路径（协作机制）
-step 6     提交完整路径，从远程获取真实误差绝对值 |e|（100 个）
-step 7     lwe_decode 首次尝试：数据文件缺键 → 报错列出可用键
-step 8     构造正确数据文件（A/b/mags/q）
-step 9     lwe_decode 求解成功 + 数学验证通过
-step 10    get_flag 提交私钥 → success
-step 11-12 Final Answer
+step 1    ssh_exec: 读附件源码 filtermaze.py，梳理 check_path 前缀预言与 LWE 构造
+step 2    ssh_exec: 读 graph.json（30 节点图）+ lwe_pub_params.json（A/b 维度）
+step 3    ssh_exec: 确认 A(100×50)/b(100)/q=1009 与协议要点
+step 4    ssh_python: 尝试自行探测秘密路径（脚本语法错误 1 次，快速放弃）
+step 5    ssh_python: 复用兄弟 agent 总线共享的哈密顿路径 [0,15,1,16,...]（30 节点）
+step 6    ssh_python: 提交完整路径 → 远程返回真实 lwe_error_magnitudes（100 个 |e|）
+step 7    lwe_decode: 首次尝试 data_file=lwe_pub_params.json（缺 error_magnitudes 键）→ 报错列出可用键
+step 8    ssh_python: 构造正确数据文件 lwe_data.json（A/b/mags/q 拼装）
+step 9    lwe_decode: data_file 求解成功 + 数学验证通过（A·s+e≡b mod 1009）
+step 10   ssh_python: get_flag 提交恢复的 s → status=success + flag
+step 11-12 Final Answer（基于真实观测提交）
 ```
 
 ## 关键结论

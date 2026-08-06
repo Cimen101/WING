@@ -20,6 +20,10 @@
 - **Flag 验证系统**（agent/flag_verify.py）：代码机制（flag 必须出现在轨迹 observation + 可疑渠道拦截 GitHub/writeup）+ LLM 轨迹审查
 - **总指挥协议总线**（bus/file_bus.py）：report（clue/dead_end/question/progress/recon_done/verified）+ directive（priority MUST/SHOULD + phase 阶段标记）
 - **主方向管理**：P1 完成后确定；修改仅两种途径（保守/激进明确证伪；创新经允许深入并证实正确）
+- **智能上下文压缩**（memory/compressor.py）：长 hard 题上下文饱和导致 LLM 输出坍塌的根治方案——每轮实时打标保留级别（关键证据/关键工具/战略指导永不全压缩）、实时时间线串联关键事实、异步事件驱动动态压缩（不阻塞主循环）、逼近上限才一次性替换、首次空输出即压缩+提示词注入
+- **合规联网搜索**（tools/reverse_image_tool.py + prompts 规则）：`web_search` 通用技术查阅（算法/库/协议原理），工具级 + 提示词级双重护栏禁止搜索本题名/writeup/题解
+- **LWE 解码工具**（tools/lwe_tool.py）：已知误差绝对值 `|e|`（符号未知）时用缩放嵌入格 + LLL 恢复私钥 s，内置数学验证（A·s+e≡b mod q），支持数据文件模式
+- **内置知识库**（data/knowledge/packages/）：按题型分类的外部 CTF 知识包（crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa），下载即用
 
 ## 目录结构
 
@@ -34,7 +38,7 @@ WING-Corvus/
 │   ├── llm/              # 三级路由
 │   ├── swarm.py          # 多风格并行 + 总指挥生命周期
 │   └── review.py / events.py
-├── data/                 # 白板数据库（空库，下载即用）
+├── data/                 # 白板数据库 + 内置知识库（knowledge/packages 外部知识包，下载即用）
 ├── main.py / pyproject.toml / .env.example
 ├── README.md
 └── WING_CORVUS_DESIGN.md # 2000+ 行完整设计+使用文档
@@ -114,4 +118,4 @@ python demo_swarm.py
 ## 声明
 
 - 仅供**授权的 CTF 竞赛环境或自有靶机**使用
-- 隐私/日志/积累技能不在此公开仓库中（见私有库 WING-data）
+- 隐私/日志/运行时积累技能保存在本地，不在本公开仓库中

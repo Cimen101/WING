@@ -99,4 +99,4 @@ print(f"solved={res.solved} flag={res.flag} winner={res.winner_style}")
 ## 声明
 
 - 仅供**授权的 CTF 竞赛环境或自有靶机**使用
-- 隐私/日志/积累技能不在此公开仓库中（见私有库 WING-data）
+- 隐私/日志/运行时积累技能保存在本地，不在本公开仓库中

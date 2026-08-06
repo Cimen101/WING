@@ -123,7 +123,7 @@ KALI_ENABLED=false
 # 3. 运行：每路一个 solve.py 子进程由 SwarmCoordinator 统一编排
 ```
 
-> 每个版本的 `data/` 已内置**空白数据库骨架**（chroma 空库 + skills 空 index.json），下载即可运行；解题过程中会自动积累技能与经验（存入本地 data/，不进 git）。
+> 每个版本的 `data/` 已内置**空白数据库骨架**（chroma 空库 + skills 空 index.json），其中 WING-Corvus 另内置**知识库**（`data/knowledge/packages/`，按题型分类的外部知识包），下载即可运行；解题过程中自动积累的技能与经验存入本地 `data/`，不进 git。
 
 ## 设计文档
 

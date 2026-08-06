@@ -1268,6 +1268,28 @@ rag_hint = retriever.retrieve(obs_text)   # 注入 "[历史经验参考] ...(仅
 - 下次跑同 challenge_id 时注入失败历史提示 + 反思提示 + (type, difficulty) 级通用提示；
 - 成功后清理失败历史（避免污染未来重跑）。
 
+### 12.5 智能上下文压缩（memory/compressor.py）
+
+**背景**：hard 题长步骤场景下，单步 LLM 调用上下文 = 系统提示词（约 46K 字符）+ 10 轮滑动窗口（每轮 ≤8.5K 字符）≈ 131K 字符，中文场景换算后逼近模型窗口，导致 LLM 输出塌陷为全空（thought/action 全空），连续触发格式熔断。
+
+**机制**（区别于普通滑动窗口的整轮丢弃）：
+
+1. **实时打标保留级别**：每轮交互由启发式（纯规则，无 LLM）打标——
+   - `level0` 全部保留：关键证据（协议/flag/验证成功标记）、关键工具成功结果、战略指导轮、最近 3 轮
+   - `level1` 部分保留：普通成功工具轮（thought 头部 + action + observation 首尾）
+   - `level2` 动态压缩：错误轮 / 纯观察轮（压缩为一行摘要）
+2. **实时时间线**：每步提取关键事实/关键操作，注入上下文（"[解题时间线]" 段），压缩后完整串联线索不丢
+3. **异步事件驱动动态压缩**：后台线程对 level1/2 轮持续预压缩（只写 pending，不阻塞主循环）
+4. **逼近上限才替换**：上下文字符估算超过硬上限（默认 60K）时，主线程一次性应用压缩（纯内存替换，毫秒级）
+5. **首次空输出即压缩**：检测到格式坍塌信号（空输出）时同步 force_compress 收缩上下文 + 提示词注入，阻断坍塌扩散
+
+**验证**：hard 题预测试 84s 一次通过（修复前 713s 失败 + 4M tokens 熔断），零格式错误。
+
+### 12.6 内置知识库（data/knowledge/packages/）
+
+- WING-Corvus `data/` 内置**外部 CTF 知识包**（按题型分类：crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa），下载即用
+- 运行时自动积累的技能/经验存入本地 `data/`，不进公开仓库
+
 ---
 
 ## 13. 工具层设计
@@ -1288,19 +1310,32 @@ rag_hint = retriever.retrieve(obs_text)   # 注入 "[历史经验参考] ...(仅
 | Web | http_request / web_recon / web_fingerprint / web_dirscan / lfi_scanner / sqlmap（总线） / encoding_helper |
 | Pwn | pwn_checksec / pwn_cyclic / pwn_ropgadget / pwn_exploit / exploit_template |
 | Reverse | angr_symbolic_exec / binary_analyze / binary_tool / apk_decompile / feistel_tool / mem_xor_analyze |
-| Crypto | crypto_rsa / crypto_classic / des_cryptanalysis / feistel_decrypt / ecdsa_nonce_reuse / sage_common_d_attack |
+| Crypto | crypto_rsa / crypto_classic / des_cryptanalysis / feistel_decrypt / ecdsa_nonce_reuse / sage_common_d_attack / **lwe_decode**（已知 \|e\| 恢复 s） |
 | Misc/Forensics | osint_exiftool / osint_steghide / osint_binwalk / osint_tshark / vision_analyze / ocr / mem_xor_tool |
-| OSINT | web_search / osm_geocode / reverse_image_search / vision_analyze |
+| OSINT / 通用查阅 | web_search（通用技术查阅 + 合规护栏）/ osm_geocode / reverse_image_search / vision_analyze |
 | 协作 | share_finding / check_findings（总线）/ shared_fs_tool（共享文件目录） |
 | 记忆 | remember_fact（中期记忆） |
 
 ### 13.4 Docker 执行链（WING-Goose Item 5）
 
 - `DOCKER_ENABLED=true`（默认）→ Docker Desktop 容器替代 ssh 执行层；daemon 不可用自动降级到 ssh；KALI_ENABLED=false（默认）时关闭 Kali 路由，纯 Docker 执行层。
-- 默认镜像 `wing-goose:v2`（补装 fpylll/angr/torch 等 6 库 + 预封装入口）；v1 以 latest 标签保留作为回滚点。
+- 默认镜像 `wing-goose:v4`（补装 fpylll/angr/torch 等 6 库 + 预封装入口）；v1 以 latest 标签保留作为回滚点。
 - 多容器：每 agent 独立容器（容器名按题参数化 `wing-goose-<agent_id>`，同题复用/异题隔离）；显式配置 DOCKER_CONTAINER 尊重单容器模式。
 - 资源调控 Profile：light(1核/1G) / normal(2核/2G) / brute(4核/2G) / heavy(4核/4G)；最大并发容器数 + 预留因子。
 - 附件宿主目录 → 容器 `/challenge/workspace`；同题共享目录 → 容器 `/shared`；`force_reset=true` 强制全新环境。
+- 默认镜像公开于 `ghcr.io/cimen101/wing-goose:v4`（`docker pull` 即用）。
+
+### 13.5 LWE 解码工具（tools/lwe_tool.py）
+
+- 适用：已知误差向量绝对值 `|e|`（符号未知）的 LWE 实例，恢复私钥 s
+- 原理：`b = A·s + e (mod q)`，已知 `|e|` 时 `e/|e| ∈ {±1}` 是超短向量 → 按幅度缩放的嵌入格 + LLL 恢复 e → 线性解 s
+- 两种用法：内联参数 / **数据文件模式**（`data_file`，大矩阵场景）；**数学自动验证**（A·s+e≡b mod q 逐分量成立才返回成功，杜绝误报）
+
+### 13.6 合规联网搜索（web_search + 反 writeup 护栏）
+
+- `web_search` 工具泛化为通用技术查阅（非仅 OSINT），可查算法原理、库/工具用法、协议/格式规范
+- **工具级护栏**：查询含 writeup / solution / 题解等关键词直接拒绝，提示改为通用技术关键词
+- **提示词级护栏**（`COMPLIANCE_SEARCH_RULES`）：禁止搜索题目名 / 比赛名+题目名 / 出题人题解 / 官方解法；只允许通用技术原理
 
 ## 14. LLM 路由与容错
 
@@ -1470,7 +1505,7 @@ WING-Corvus/
 
 - Python ≥3.10；
 - 依赖：openai>=1.40 / httpx>=0.27 / python-dotenv>=1.0 / pydantic>=2.6 / pydantic-settings>=2.2 / rich>=13.7（docker 后端额外 docker>=7.0）；
-- 执行层二选一：Docker Desktop（默认，DOCKER_ENABLED=true）+ wing-goose:v2 镜像；或 Kali SSH（KALI_ENABLED=true 时启用）；
+- 执行层二选一：Docker Desktop（默认，DOCKER_ENABLED=true）+ wing-goose:v4 镜像；或 Kali SSH（KALI_ENABLED=true 时启用）；
 - LLM API：至少配置 go 套餐（推荐）或 zen/官方 flash。
 
 ### 18.2 安装步骤
@@ -1483,7 +1518,7 @@ pip install -e ".[docker]"          # 或 pip install -e .（无 docker 后端�
 cp .env.example .env                # 编辑 .env 填写 API Key 等
 
 # 3. （可选）构建 Docker 镜像
-docker build -f scripts/docker_test/Dockerfile.wing-goose -t wing-goose:v2 .
+docker build -f scripts/docker_test/Dockerfile.wing-goose -t wing-goose:v4 .
 
 # 4. 冒烟验证（可选）
 python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.config import get_settings; print(RoutedLLMClient(get_settings()).smoke_test())"
@@ -1553,7 +1588,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
    ```
 3. **Docker 执行层（推荐默认）**：
    - 安装并启动 Docker Desktop；
-   - 准备 `wing-goose:v2` 镜像（若 `DOCKER_BUILD_ON_MISSING=true` 会自动构建；否则手动构建或改用已有镜像）。
+   - 准备 `wing-goose:v4` 镜像（若 `DOCKER_BUILD_ON_MISSING=true` 会自动构建；否则手动构建或改用已有镜像）。
 4. **LLM API**：
    - 推荐：Opencode go 套餐（`GO_API_KEY` + `GO_BASE_URL=https://opencode.ai/zen/go/v1`），国内部署直连快且稳定；
    - 备选：zen 免费层 / 官方 deepseek flash（FALLBACK_*）；
@@ -1603,7 +1638,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `DOCKER_ENABLED` | `true` | Docker 容器替代 ssh 执行层；daemon 不可用自动降级到 ssh |
-| `DOCKER_IMAGE` | `wing-goose:v2` | 默认镜像（补装 fpylll/angr/torch 等 6 库）；v1 以 latest 标签保留作回滚点 |
+| `DOCKER_IMAGE` | `wing-goose:v4` | 默认镜像（补装 fpylll/angr/torch 等 6 库）；v1 以 latest 标签保留作回滚点 |
 | `DOCKER_BACKEND` | `sdk` | cli \| sdk（docker-py） |
 | `DOCKER_CONTAINER` | `wing-goose-worker` | 容器名（swarm 场景每 agent 独立容器 `wing-goose-<id>`） |
 | `DOCKER_WORKDIR` | `/challenge` | 容器工作目录 |
@@ -1708,7 +1743,7 @@ task JSON 示例：
 
 ### 20.5 Docker 执行链
 
-1. `DOCKER_ENABLED=true`（默认）：`solve.py` 构造 `DockerClient`（镜像 wing-goose:v2，容器 `wing-goose-<agent_id>`，工作目录 /challenge）。
+1. `DOCKER_ENABLED=true`（默认）：`solve.py` 构造 `DockerClient`（镜像 wing-goose:v4，容器 `wing-goose-<agent_id>`，工作目录 /challenge）。
 2. 附件挂载：宿主附件目录 → 容器 `/challenge/workspace`；同题共享目录 → 容器 `/shared`。
 3. 工具层：docker_exec / docker_python / docker_upload 优先；daemon 不可用自动降级 ssh（若 KALI_ENABLED=true 且 Kali 可达）。
 4. 资源配额：按 DOCKER_CPU_PROFILE 限制容器 CPU/内存；`DOCKER_MAX_CONTAINERS` 控制并发。
@@ -2062,3 +2097,27 @@ Get-Content data/bus/<challenge_id>.jsonl
 ### 22.5 文档说明
 
 本文档基于 WING-Corvus 源码逐行审计编写，覆盖全部新增能力（总指挥、战略层协作、多阶段协调、Flag 验证、总线协议、解析容错等）及相对 WING-Goose 的版本演进。如源码后续更新，请以代码为准并同步本文档。
+
+### 22.7 升级历程与迭代记录
+
+#### 大版本谱系
+
+```
+WING-Falcon（猎隼）── 精英单兵（单 agent 解题引擎基线）
+        │ 新增：三风格并行 swarm、消息总线、轨迹复盘、docker 执行链
+WING-Goose（雁阵）── 多 agent 编队
+        │ 新增：总指挥三层协作、多阶段协调（P1-P4）、flag 验证系统
+WING-Corvus（渡鸦）── 协作小队（当前最新版）
+```
+
+#### WING-Corvus 迭代记录（Sprint）
+
+| 迭代 | 主题 | 要点 |
+|------|------|------|
+| 32.x | 总指挥/战略层 | 三层协作架构、多阶段协调 P1-P4、总线协议（report/directive） |
+| 36.2 | flag 验证强化 | 提交前 flag 验证（代码机制 + LLM 轨迹审查）、附件侦察强制规则 |
+| 36.3 | 格式坍塌初修 | observation 截断回灌、reasoning 回退免费重答、最小输出模式升级 |
+| 36.4 | 上下文预算 + 工具强化 | assistant 统一截断回灌、lwe_decode 工具、web_search 合规化、合规搜索规则 |
+| 36.4.2 | 智能上下文压缩 | level 打标 + 实时时间线 + 异步事件驱动动态压缩 + 首次坍塌即压缩 |
+
+> 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、13.4 镜像、13.5 LWE 工具、13.6 合规搜索；迭代验证记录见 `dev-notes/`。

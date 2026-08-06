@@ -1,0 +1,195 @@
+{
+  "package_count": 10,
+  "packages": {
+    "ctf-ai-ml-1.0.0": {
+      "name": "ctf-ai-ml",
+      "description": "Provides AI and machine learning techniques for CTF challenges. Use when attacking ML models, crafting adversarial examples, performing model extraction, prompt injection, membership inference, training data poisoning, fine-tuning manipulation, neural network analysis, LoRA adapter exploitation, LLM jailbreaking, or solving AI-related puzzles.",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "adversarial-ml.md",
+        "llm-attacks.md",
+        "model-attacks.md"
+      ],
+      "count": 5
+    },
+    "ctf-crypto-1.0.0": {
+      "name": "ctf-crypto",
+      "description": "Provides cryptography attack techniques for CTF challenges. Use when attacking encryption, hashing, signatures, ZKP, PRNG, or mathematical crypto problems involving RSA, AES, ECC, lattices, LWE, CVP, number theory, Coppersmith, Pollard, Wiener, padding oracle, GCM, key derivation, or stream/block cipher weaknesses.",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "advanced-math.md",
+        "classic-ciphers.md",
+        "ecc-attacks.md",
+        "exotic-crypto.md",
+        "historical.md",
+        "lattice-and-lwe.md",
+        "modern-ciphers-2.md",
+        "modern-ciphers.md",
+        "prng.md",
+        "rsa-attacks-2.md",
+        "rsa-attacks.md",
+        "stream-ciphers.md",
+        "zkp-and-advanced.md"
+      ],
+      "count": 15
+    },
+    "ctf-forensics-1.0.0": {
+      "name": "ctf-forensics",
+      "description": "Provides digital forensics and signal analysis techniques for CTF challenges. Use when analyzing disk images, memory dumps, event logs, network captures, cryptocurrency transactions, steganography, PDF analysis, Windows registry, Volatility, PCAP, Docker images, coredumps, side-channel power traces, DTMF audio spectrograms, packet timing analysis, CD audio disc images, or recovering deleted files and credentials.",
+      "version": "1.0.0",
+      "files": [
+        "3d-printing.md",
+        "SKILL.md",
+        "_meta.json",
+        "disk-advanced.md",
+        "disk-and-memory.md",
+        "disk-recovery.md",
+        "linux-forensics.md",
+        "network-advanced.md",
+        "network.md",
+        "signals-and-hardware.md",
+        "steganography.md",
+        "stego-advanced-2.md",
+        "stego-advanced.md",
+        "stego-image.md",
+        "windows.md"
+      ],
+      "count": 15
+    },
+    "ctf-malware-1.0.0": {
+      "name": "ctf-malware",
+      "description": "Provides malware analysis and network traffic techniques for CTF challenges. Use when analyzing obfuscated scripts, malicious packages, custom crypto protocols, C2 traffic, PE/.NET binaries, RC4/AES encrypted communications, YARA rules, shellcode analysis, memory forensics for malware (Volatility malfind, process injection detection), anti-analysis techniques (VM/sandbox detection, timing evasion, API hashing, process injection, environment checks), or extracting malware configurations and indicators of compromise.",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "c2-and-protocols.md",
+        "pe-and-dotnet.md",
+        "scripts-and-obfuscation.md"
+      ],
+      "count": 5
+    },
+    "ctf-misc-1.0.0": {
+      "name": "ctf-misc",
+      "description": "Provides miscellaneous CTF challenge techniques. Use for encoding puzzles, RF/SDR signal processing, Python/bash jails, DNS exploitation, unicode steganography, floating-point tricks, QR codes, audio challenges, Z3 constraint solving, Kubernetes RBAC, WASM game patching, esoteric languages, game theory, commitment schemes, combinatorial games, or challenges that don't fit other categories.",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "bashjails.md",
+        "dns.md",
+        "encodings-advanced.md",
+        "encodings.md",
+        "games-and-vms-2.md",
+        "games-and-vms-3.md",
+        "games-and-vms.md",
+        "linux-privesc.md",
+        "pyjails.md",
+        "rf-sdr.md"
+      ],
+      "count": 12
+    },
+    "ctf-osint-1.0.0": {
+      "name": "ctf-osint",
+      "description": "Provides open source intelligence techniques for CTF challenges. Use when gathering information from public sources, social media, geolocation, DNS records, username enumeration, reverse image search, Google dorking, Wayback Machine, Tor relays, FEC filings, or identifying unknown data like hashes and coordinates.",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "geolocation-and-media.md",
+        "social-media.md",
+        "web-and-dns.md"
+      ],
+      "count": 5
+    },
+    "ctf-pwn-1.0.0": {
+      "name": "ctf-pwn",
+      "description": "Provides binary exploitation (pwn) techniques for CTF challenges. Use when exploiting buffer overflows, format strings, heap vulnerabilities (House of Orange, Spirit, Lore, Apple 2, Einherjar, tcache stashing unlink), race conditions, kernel bugs, ROP chains, ret2libc, ret2dlresolve, shellcode, GOT overwrite, use-after-free, seccomp bypass, FSOP, stack pivot, sandbox escape, Windows SEH overwrite, VirtualAlloc ROP, SeDebugPrivilege escalation, or Linux kernel exploitation (modprobe_path, tty_struct, userfaultfd, KASLR bypass, SLUB heap spray).",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "advanced-exploits-2.md",
+        "advanced-exploits-3.md",
+        "advanced-exploits-4.md",
+        "advanced-exploits.md",
+        "advanced.md",
+        "format-string.md",
+        "heap-techniques.md",
+        "kernel-bypass.md",
+        "kernel-techniques.md",
+        "kernel.md",
+        "overflow-basics.md",
+        "rop-advanced.md",
+        "rop-and-shellcode.md",
+        "sandbox-escape.md"
+      ],
+      "count": 16
+    },
+    "ctf-reverse-1.0.0": {
+      "name": "ctf-reverse",
+      "description": "Provides reverse engineering techniques for CTF challenges. Use when analyzing binaries, game clients, obfuscated code, esoteric languages, custom VMs, anti-debugging, anti-analysis bypass, WASM, .NET, APK (including Flutter/Dart AOT with Blutter), HarmonyOS HAP/ABC, Python bytecode, Go/Rust/Swift/Kotlin binaries, VMProtect/Themida, Ghidra, GDB, radare2, Frida, angr, Qiling, Triton, binary diffing, macOS/iOS Mach-O, embedded firmware, kernel modules, game engines, or extracting flags from compiled executables.",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "anti-analysis.md",
+        "languages-compiled.md",
+        "languages-platforms.md",
+        "languages.md",
+        "patterns-ctf-2.md",
+        "patterns-ctf-3.md",
+        "patterns-ctf.md",
+        "patterns.md",
+        "platforms-hardware.md",
+        "platforms.md",
+        "tools-advanced.md",
+        "tools-dynamic.md",
+        "tools.md"
+      ],
+      "count": 15
+    },
+    "ctf-web": {
+      "name": "ctf-web",
+      "description": "",
+      "version": null,
+      "files": [
+        "ctf-web/SKILL.md",
+        "ctf-web/auth-and-access.md",
+        "ctf-web/auth-infra.md",
+        "ctf-web/auth-jwt.md",
+        "ctf-web/client-side-advanced.md",
+        "ctf-web/client-side.md",
+        "ctf-web/core_input_processing.md",
+        "ctf-web/cves.md",
+        "ctf-web/database_query_patterns.md",
+        "ctf-web/dynamic_module_processing.md",
+        "ctf-web/field-notes.md",
+        "ctf-web/node-and-prototype.md",
+        "ctf-web/object_mapper_logic.md",
+        "ctf-web/server-side-advanced.md",
+        "ctf-web/server-side-exec-2.md",
+        "ctf-web/service_interaction_patterns.md",
+        "ctf-web/web3.md"
+      ],
+      "count": 17
+    },
+    "rsa-ctf-skills-1.0.0": {
+      "name": "rsa-ctf-skills",
+      "description": "集成11种RSA攻击算法的CTF解题工具，支持factordb在线分解；当用户需要解密RSA密文、分解n模数、分析CTF密码学题目或实现特定RSA攻击场景时使用",
+      "version": "1.0.0",
+      "files": [
+        "SKILL.md",
+        "_meta.json",
+        "references/attack-guides.md",
+        "scripts/rsa_solver.py",
+        "skill-card.md"
+      ],
+      "count": 5
+    }
+  }
+}

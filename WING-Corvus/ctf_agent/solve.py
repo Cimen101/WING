@@ -476,6 +476,15 @@ def _build_engine(task: dict[str, Any], settings: Any):
     except Exception:
         long_term = None
 
+    # 中期记忆 (MidTermMemory): 单题关键事实记录 (RememberFactTool 数据源),
+    # 供战术层 remember_fact 记录 + system prompt 刷新注入 (内存库, 随进程销毁)
+    mid_term = None
+    try:
+        from ctf_agent.memory import MidTermMemory
+        mid_term = MidTermMemory()
+    except Exception:
+        mid_term = None
+
     # WING-Goose 第 8 节: 解题风格 (并行场景每路不同; 无 style 则走默认保守路径)
     style = str(task.get("style") or "").strip()
     sys_prompt = None
@@ -530,6 +539,10 @@ def _build_engine(task: dict[str, Any], settings: Any):
         on_step=_make_on_step(),
         # Sprint 22.5: 接入 Skill 库 — 自学习积累的套路要能注入解题 prompt
         skill_library=skill_library,
+        # 中期记忆 (RememberFactTool 数据源) + 长期记忆 (RAG) —
+        # 与巡查器共用同一 long_term; 战术层每 8 步 RAG 延迟注入依赖它
+        mid_term=mid_term,
+        long_term=long_term,
         # Sprint 26: 重试时强制 max 思考强度 (NSS Runner retry_hint 非空时设置)
         force_max_thinking=bool(task.get("force_max_thinking", False)),
         # Sprint 26: 多次提交机制 (max_submissions>1 时启用)
@@ -788,6 +801,24 @@ def solve_task(task: dict[str, Any]) -> int:
 
     # 轨迹复盘 (T6 封装: LLM 深度复盘, 与 _learn 互补)
     _review(result, task, getattr(engine, "llm", None))
+
+    # 经验沉淀 (LTM): 解题成功 → 去标识化 writeup 写入长期记忆 (RAG 自增长).
+    # 与 _learn/_review 互补: 前两者写 Skill/md 技能库, 这里写 LTM 向量库.
+    if result.success:
+        try:
+            from ctf_agent.experience import ingest_solution
+            _ctype = str(task.get("type") or "misc").lower().strip()
+            _diff = task.get("difficulty") or ""
+            doc_id = ingest_solution(
+                desc,
+                result,
+                challenge_type=_ctype or "misc",
+                difficulty=int(_diff) if str(_diff).strip().isdigit() else None,
+            )
+            if doc_id:
+                _log("INFO", f"经验沉淀: 已写入长期记忆 {doc_id} (RAG 自增长)")
+        except Exception as e:  # noqa: BLE001 - 经验沉淀失败不影响主流程
+            _log("WARN", f"经验沉淀失败: {e}")
 
     # 结果
     flag = _extract_flag(result.final_answer or "") if result.success else ""

@@ -768,7 +768,25 @@ COMPLIANCE_SEARCH_RULES = """# 🌐 联网搜索合规规则 (Sprint 36.4 强化
 - ✅ 查**库/工具用法**: 如 "fpylll LLL usage", "angr symbolic execution tutorial", "gdb python scripting"
 - ✅ 查**通用漏洞/技术**: 如 "python pickle deserialization RCE", "SSTI payload 原理", "整数溢出 转换"
 - ✅ 查**协议/格式规范**: 如 "PNG chunk structure", "ELF relocation 格式"
+- ✅ 查**交互回显型程序机制**: 程序要你猜数字/回显答案/输出自包含逻辑时, 如
+  "CTF 程序输出随机数 猜数字 交互", "brainfuck interpreter guess the number" —
+  这类题正解常为**把本地运行程序得到的答案发回远程**, 不要反复逆向静态分析
 - ⛔ 禁止把搜索命中的具体题目/题解内容作为依据; 只把"通用原理"用于自己的推理
+"""
+
+# 通用解题方法论: 交互回显型程序优先"运行+回显"而非逆向 (Sprint 36.5 复盘: FSCTF 2023
+# What am I thinking? 因把交互回显题当 pwn 逆向硬啃 60+ 步未解出)
+INTERACTIVE_PROGRAM_RULE = """# 交互回显型程序 (通用方法, 重要)
+
+当程序表现为**交互回显型**时, 正解通常是"运行 → 取答案 → 回显给远程", 而不是漏洞利用:
+- **特征**: 程序输出 base64/自包含程序让你接收; 要你猜数字 (guess the number / 随机数);
+  输出提示后等待你回显答案 (如 "Tell me what the number is"); 简单的输入→回显循环.
+- **正解路径**: ①接收程序输出并保存 → ②**本地运行它**, 读取完整输出 (常含答案如随机数) →
+  ③把该答案作为输入**发回远程** (sendline) → ④拿到 flag.
+- ⛔ 不要一上来就 objdump/readelf/strings 逆向静态分析: 这类题核心是"运行程序拿答案",
+  不是找溢出/格式化字符串漏洞. 若拿到的程序不完整/截断, 先解决接收完整性 (循环收 chunk),
+  再运行取数, 而不是转向查 .data/找 flag.
+- 卡住时可用 web_search 查该交互机制的通用做法 (见合规搜索规则).
 """
 
 # 保留的格式和反误解规则 (核心硬约束, 不能去)
@@ -817,6 +835,8 @@ SYSTEM_PROMPT_TEMPLATE = """你是 CTF (Capture The Flag) 解题 Agent. 你通�
 # 输出格式与规则
 
 {common_rules}
+
+{interactive_program_rule}
 
 {anti_hallucination_rules}
 
@@ -895,6 +915,8 @@ def build_system_prompt(
     prompt = prompt.replace("{common_rules}", COMMON_RULES)
     prompt = prompt.replace("{anti_hallucination_rules}", ANTI_HALLUCINATION_RULES)
     prompt = prompt.replace("{compliance_rules}", COMPLIANCE_SEARCH_RULES)
+    # Sprint 36.5: 交互回显型程序通用方法 (防把交互题当逆向硬啃)
+    prompt = prompt.replace("{interactive_program_rule}", INTERACTIVE_PROGRAM_RULE)
     prompt = prompt.replace("{skill_injection}", skill_text)
     prompt = prompt.replace("{tool_schemas}", render_tool_schemas(tools))
 

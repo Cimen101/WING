@@ -1018,6 +1018,17 @@ class Coordinator:
                 # 防止 MUST 被忽略后 agent 继续重复同一操作
                 self._auto_add_forbidden(recent)
 
+        # Sprint 36.5: 意图级重复 — 相同工具+相同思路连续重复 (参数微调但本质固化).
+        # 补 _check_exact_repeats 盲区: 后者要求 action_input 相似, 思路重复捕获不到
+        # (复盘: aggressive 连续 4 步"分析 ELF .data 段查找 flag 和随机数"未被干预)
+        repetitive_intent = self._check_repetitive_intent(recent)
+        if repetitive_intent:
+            if self._has_progress(recent):
+                soft_hints.append(repetitive_intent + " (但持续有新发现, 需 LLM 判断是否思路固化)")
+            else:
+                hard_issues.append(repetitive_intent)
+                self._auto_add_forbidden(recent)
+
         # Sprint 35: 全局死循环检测 — 跨 lookback 窗口的重复 (如 step 50 试过 step 80 又试)
         global_repeat = self._check_tried_directions(recent)
         if global_repeat:
@@ -1069,6 +1080,12 @@ class Coordinator:
         tool_overuse = self._check_tool_overuse(recent)
         if tool_overuse:
             soft_hints.append(tool_overuse)
+
+        # Sprint 36.5: 交互回显型程序纠偏 — 深陷静态分析但程序实为"运行+回显"型.
+        # 软线索交 L2 LLM 结合完整轨迹判断 (避免误伤真正的逆向题).
+        interactive_program = self._check_interactive_program(recent, task_desc)
+        if interactive_program:
+            soft_hints.append(interactive_program)
 
         error_streak = self._check_errors(recent)
         if error_streak:
@@ -1142,6 +1159,76 @@ class Coordinator:
         for action, count in counter.items():
             if count >= self.max_repeats:
                 return f"完全重复: '{action[:80]}' 出现 {count} 次"
+        return ""
+
+    @staticmethod
+    def _norm_intent(text: str) -> str:
+        """归一化意图文本 (去数字/路径/地址/标点), 用于识别"思路重复但参数不同"的死循环."""
+        t = (text or "").lower()
+        t = re.sub(r"\d+", "N", t)
+        t = re.sub(r"/tmp/[^ \"']+", "P", t)
+        t = re.sub(r"0x[0-9a-f]+", "A", t)
+        t = re.sub(r"[^a-z\u4e00-\u9fff]+", " ", t)
+        return " ".join(t.split())[:80]
+
+    def _check_repetitive_intent(self, recent: list[dict]) -> str:
+        """Sprint 36.5: 意图级重复检测 — 相同工具 + 相似思路连续重复.
+
+        与 _check_exact_repeats 互补: 后者要求 action_input 相似, 而 agent 每次
+        thought 微调/参数不同时签名不同, 不会被捕获. 这里归一化 thought 后比较,
+        连续 ≥max_repeats+1 步同一 action + 同一意图 = 思路固化死循环
+        (如反复"分析 .data 段查找 flag 和随机数"). 有实质进展时由调用方降级软线索.
+        """
+        if len(recent) < self.max_repeats + 1:
+            return ""
+        streak = 0
+        last_key = None
+        for step in recent:
+            action = (step.get("action") or "").strip()
+            if not action:
+                streak = 0
+                last_key = None
+                continue
+            key = f"{action}:{self._norm_intent(step.get('thought') or '')}"
+            if key == last_key:
+                streak += 1
+            else:
+                streak = 1
+                last_key = key
+            if streak >= self.max_repeats + 1:
+                intent = key.split(":", 1)[1][:40]
+                return (f"意图重复: 同一工具 [{action}] 连续 {streak} 步思路相同 "
+                        f"'{intent}' (思路固化, 参数虽不同但本质在重复同一件事)")
+        return ""
+
+    def _check_interactive_program(self, recent: list[dict], task_desc: str) -> str:
+        """Sprint 36.5: 交互回显型程序纠偏 — 深陷静态分析而程序实为"交互回显"时给方向提示.
+
+        特征: 程序输出 base64 自包含程序 / 要求用户猜数字 / "Tell me what the number" /
+        随机数回显. 正解常为: 运行提取的程序 → 取输出 (如随机数) → 回显给远程.
+        当 agent 连续用静态分析 (objdump/readelf/strings/binary_analyze) 而观测含
+        上述交互特征时, 产出软线索交 L2 LLM 判断 (避免误伤真正的逆向题).
+        """
+        blob = task_desc + " " + " ".join(
+            str(s.get("observation") or "") for s in recent[-3:]
+        )
+        low = blob.lower()
+        interactive = any(k in low for k in (
+            "guess the number", "random number", "random num", "随机数", "猜数字",
+            "my mind", "my brain", "tell me what the number", "回显", "菜单",
+            "what the number is", "think of a number",
+        ))
+        if not interactive:
+            return ""
+        static_actions = 0
+        for s in recent[-5:]:
+            a = (s.get("action") or "").lower()
+            if "exec" in a or "analyze" in a or "objdump" in a or "readelf" in a or "strings" in a:
+                static_actions += 1
+        if static_actions >= 3:
+            return ("交互回显型程序特征: 观测含猜数字/随机数回显/菜单等交互信号, 而你近期连续"
+                    "静态分析. 这类题正解常为: 运行提取的程序/二进制, 读取其完整输出 "
+                    "(如随机数/提示), 并把该输出回显给远程 (sendline), 而非漏洞利用.")
         return ""
 
     @staticmethod

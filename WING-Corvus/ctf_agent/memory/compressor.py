@@ -140,7 +140,10 @@ class ContextCompressor:
     soft_limit: int = SOFT_LIMIT
     hard_limit: int = HARD_LIMIT
     recent_keep: int = RECENT_KEEP
-    _pending: dict = field(default_factory=dict)  # index -> 压缩版 (assistant, observation)
+    # 预压缩结果: ts(step_no) -> (压缩后 assistant, 压缩后 observation).
+    # 用 step_no 而非滑动窗口索引作为轮次身份 — 新轮加入触发裁剪后,
+    # 索引会整体前移, 索引键会导致压缩错位 (把压缩版套到相邻轮).
+    _pending: dict = field(default_factory=dict)
     _timeline: list[str] = field(default_factory=list)
     _started: bool = field(default=False, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
@@ -191,11 +194,14 @@ class ContextCompressor:
         """格式坍塌信号 (空输出) 时同步调用: 立即应用 pending + 直接压缩未压缩轮."""
         self.apply_pending(memory)
         # 对仍未压缩的 level1/2 轮直接就地压缩 (同步, 规则截断毫秒级)
-        for i, (asst, obs, meta) in enumerate(memory.rounds()):
+        for _i, (asst, obs, meta) in enumerate(memory.rounds()):
             if meta.get("compressed") or meta.get("level", LEVEL_KEEP) == LEVEL_KEEP:
                 continue
+            ts = meta.get("ts")
+            if ts is None:
+                continue
             new_asst, new_obs = _compress_round(asst.content, obs.content, meta)
-            self._pending[i] = (new_asst, new_obs)
+            self._pending[ts] = (new_asst, new_obs)
         self.apply_pending(memory)
 
     # ---------- 预压缩 (后台线程) ----------
@@ -208,14 +214,17 @@ class ContextCompressor:
         def _worker() -> None:
             try:
                 snapshot = []
-                for i, (asst, obs, meta) in enumerate(memory.rounds()):
+                for _i, (asst, obs, meta) in enumerate(memory.rounds()):
                     if meta.get("compressed") or meta.get("level", LEVEL_KEEP) == LEVEL_KEEP:
                         continue
-                    snapshot.append((i, asst.content, obs.content, dict(meta)))
-                for i, asst, obs, meta in snapshot:
-                    if i in self._pending:
+                    ts = meta.get("ts")
+                    if ts is None:  # 无 step_no 标记的轮次不参与压缩 (缺省 level0 不会走到这)
                         continue
-                    self._pending[i] = _compress_round(asst, obs, meta)
+                    snapshot.append((ts, asst.content, obs.content, dict(meta)))
+                for ts, asst, obs, meta in snapshot:
+                    if ts in self._pending:
+                        continue
+                    self._pending[ts] = _compress_round(asst, obs, meta)
             except Exception:  # noqa: BLE001 - 后台压缩失败不影响主循环
                 pass
             finally:
@@ -226,12 +235,19 @@ class ContextCompressor:
 
     # ---------- 主线程: 应用 pending (毫秒级) ----------
     def apply_pending(self, memory: ShortTermMemory) -> None:
-        """把已预压缩的轮次替换进滑动窗口 (纯内存操作, 不阻塞)."""
+        """把已预压缩的轮次替换进滑动窗口 (纯内存操作, 不阻塞).
+
+        按 ts(step_no) 匹配当前轮次实时索引: 滑动窗口裁剪会改变索引,
+        但 step_no 身份不变, 保证压缩版套到正确的轮次.
+        """
         if not self._pending:
             return
         plans = []
-        for i, (asst, obs) in self._pending.items():
-            plans.append((i, asst, obs))
+        for i, (asst, obs, meta) in enumerate(memory.rounds()):
+            ts = meta.get("ts")
+            if ts in self._pending:
+                new_asst, new_obs = self._pending[ts]
+                plans.append((i, new_asst, new_obs))
         if plans:
             memory.apply_compressions(plans)
         self._pending.clear()

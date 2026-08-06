@@ -599,11 +599,14 @@ analyze(trajectory)
 - **精确签名禁忌**（`_forbidden_signatures`）：死循环自动将重复操作（action + action_input 前 100 字符归一化）加入禁忌，精确匹配避免关键词误伤不同命令。
 - **关键词禁忌**（`_forbidden_actions`）：LLM 分析时生成（如"hashcat 爆破 cloud.zip 密码"连续失败后），提取 >3 字符关键词匹配拦截。
 - **MUST 未执行检测**：上次干预是 MUST 且主导工具未变 + 无实质进展（≥2 种不同 observation 才算进展）→ 升级为 MUST 阻断，同时追加禁忌。
+- **意图级重复检测**（Sprint 36.5，`_check_repetitive_intent`）：补完全重复检测的盲区——agent 每次 thought/参数微调导致 action_input 签名不同而思路固化时（如连续 4 步"分析 ELF .data 段查找 flag 和随机数"），对 thought 归一化（去数字/路径/地址/标点）后连续 ≥4 步同一工具 + 同一意图即判定意图重复；有实质进展降级软线索交 L2，无进展 MUST 干预 + 自动禁忌。
 - **拦截时机**：`intercept_forbidden` 在工具执行前检查（巡查间隔之外也拦截），避免继续浪费步数。
 
 ### 5.8 分析瘫痪检测
 
 复盘根因（linx/threshold/faulty_mayo 三题 hard 全败）：agent 在"理解/读源码/解析数据"阶段无限滞留，从不执行攻击脚本。检测逻辑：总步数 ≥ `execution_starvation_min_steps=20`（前期信息收集合理），且最近 8 步内无任何执行类工具（`_EXECUTION_TOOLS`：ssh_exec / ssh_python / docker_exec / docker_python / ssh_upload / docker_upload / http_request / exploit_template）→ 判定分析瘫痪，MUST 级干预要求立即写最小攻击脚本运行验证。
+
+**交互回显型程序纠偏**（Sprint 36.5，`_check_interactive_program`）：复盘 FSCTF 2023 [What am I thinking?]——程序输出 base64 自包含程序并要用户"猜随机数"，正解是**本地运行提取的程序 → 取答案 → 回显给远程**（约 4 步），而 agent 因题目标 pwn 深陷逆向静态分析 60+ 步未解出。检测：观测含猜数字/随机数回显/菜单等交互信号 + 近期连续静态分析（objdump/readelf/strings 等）→ 软线索交 L2 判断："这类题正解常为运行提取的程序并回显答案，而非漏洞利用"。配套在 system prompt 注入 `INTERACTIVE_PROGRAM_RULE`（运行→取答案→回显 正解路径 + 禁止一上来就逆向）。
 
 ### 5.9 创新模式：灵感板 + 发散优先约束
 
@@ -1239,7 +1242,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 |----|------|--------|------|
 | 短期记忆 | `ShortTermMemory` | 单题单 agent | ReAct 对话消息管理 + 滑动窗口裁剪（max_rounds） |
 | 中期记忆 | `MidTermMemory` | 单题 | RememberFactTool 记录关键事实，注入 system prompt |
-| 长期记忆 | `LongTermMemory`（chroma 向量库） | 跨题 | RAG 检索历史 writeup（去标识化沉淀） |
+| 长期记忆 | `LongTermMemory`（chroma 向量库） | 跨题 | RAG 检索历史 writeup（去标识化沉淀；默认 `KeywordHashEmbedding(256)` 与种子 collection 维度一致） |
 | Skill 库 | `SkillLibrary` + 经验库 | 跨题 | 可复用解题套路（持续学习积累） |
 
 ### 12.2 RAG 检索策略（校准）
@@ -1258,7 +1261,7 @@ rag_hint = retriever.retrieve(obs_text)   # 注入 "[历史经验参考] ...(仅
 
 - **Skill 库**（`SkillLibrary`，持续学习）：解题时注入相关技能；每 8 步基于累积 observation mid-solve 动态注入（`format_for_mid_solve`）。
 - **经验库**（skill_library.json，抽象解题方法 + 禁忌）：mid-solve 动态注入（10 步冷却，去重）；巡查器基于 recon_steps 判断方向、基于 notes（禁忌）纠正错误；confidence 规则：仅 high 经验可触发 [MUST] 纠正，medium/low 仅作参考。
-- ****：解题前静态注入默认关闭（题目混淆根因）；所有经验延后到侦查阶段完成后基于实际观测做 mid-solve 动态注入。
+- **静态注入默认关闭**：解题前静态注入默认关闭（题目混淆根因）；所有经验延后到侦查阶段完成后基于实际观测做 mid-solve 动态注入。
 
 ### 12.4 失败轨迹缓存与演化反思
 
@@ -1336,6 +1339,7 @@ rag_hint = retriever.retrieve(obs_text)   # 注入 "[历史经验参考] ...(仅
 - `web_search` 工具泛化为通用技术查阅（非仅 OSINT），可查算法原理、库/工具用法、协议/格式规范
 - **工具级护栏**：查询含 writeup / solution / 题解等关键词直接拒绝，提示改为通用技术关键词
 - **提示词级护栏**（`COMPLIANCE_SEARCH_RULES`）：禁止搜索题目名 / 比赛名+题目名 / 出题人题解 / 官方解法；只允许通用技术原理
+- **使用引导**（Sprint 36.5）：明确允许搜索**交互回显型程序机制**（如"CTF 程序输出随机数猜数字交互"、"brainfuck interpreter guess the number"）——这类题正解常为把本地运行程序得到的答案发回远程，卡住时可据此快速换思路，而不是反复逆向静态分析
 
 ## 14. LLM 路由与容错
 
@@ -1428,11 +1432,13 @@ WING-Goose（2026-08）起 `LLM_PROVIDER=go`（默认）时：**只走 go 套餐
 1. **独立上下文**：LLM 只读轨迹文本，不看解题过程内部状态；
 2. 提取三样输出：`facts`（可核验的事实，标注来源：轨迹名+步骤号）/ `lessons`（有效/无效操作总结）/ `skills`（可复用技能，2-3 条，面向未来同类题可直接照做，必须只用轨迹中出现过的技术）；
 3. **无幻觉核对**：逐条核对 facts 中的实体是否在轨迹中出现（`hallucination_check.no_hallucination`）；
-4. **可选入库**：`no_hallucination=true` 且 skill_count>0 → `ingest_skills` 入 md 技能库（和/或经验库）；检测到幻觉 → skill 未入库。
+4. **可选入库**：`no_hallucination=true` 且 skill_count>0 → `ingest_skills` 入 md 技能库（`skill_library.add_or_update`，复用自学习 Skill 库）；检测到幻觉 → skill 未入库。
 
 ### 16.3 持续学习闭环
 
 - 解题成功 → `ingest_solution` 去标识化写入长期记忆（LTM）→ RAG 后续同类题开局可检索到"自己解过的题"（flag 已隐去）；
+- **运行模式一致性**（Sprint 36.5 修正）：swarm 子进程（`solve.py`）与 CLI 单 agent（`main.py`）两条入口均接入完整记忆链路——`solve.py` 的 `_build_engine` 同时传入 `long_term`（战术层每 8 步 RAG 延迟注入 + 巡查器知识查询）、`mid_term`（RememberFactTool 中期记忆）与 `experience_library`；求解成功后由 `_learn`（Skill）→ `_review`（LLM 复盘入 md 技能库）→ `ingest_solution`（去标识化写入 LTM）串成全链路；
+- **LTM embedding 一致性**（Sprint 36.5 修复）：`LongTermMemory` 默认 embedding 从 Chroma 默认（384 维，与种子 collection 256 维不匹配导致写入/检索静默失败）改为与种子一致的 `KeywordHashEmbedding(256)`（`memory/embeddings.py`，离线确定性），修复 RAG 检索与自增长；
 - Skill 库 `prune()` 自我迭代：控制规模，避免臃肿；
 - 失败 → 失败轨迹缓存 + 演化反思。
 
@@ -1451,7 +1457,7 @@ WING-Corvus/
 │   ├── cli/                  # CLI runner
 │   ├── knowledge/            # Kali 武器库
 │   ├── llm/                  # LLM 客户端（client.py + routed.py）
-│   ├── memory/               # 记忆层（short/mid/long_term + rag + skill_library）
+│   ├── memory/               # 记忆层（short/mid/long_term + rag + skill_library + embeddings）
 │   ├── orchestrator/         # 编排（adaptive.py + breaker.py + state.py）
 │   ├── range/                # 本地靶场（catalog/compose/flag/manager/tool）
 │   ├── skills/               # 经验库（injector/library/skill）
@@ -2119,5 +2125,6 @@ WING-Corvus（渡鸦）── 协作小队（当前最新版）
 | 36.3 | 格式坍塌初修 | observation 截断回灌、reasoning 回退免费重答、最小输出模式升级 |
 | 36.4 | 上下文预算 + 工具强化 | assistant 统一截断回灌、lwe_decode 工具、web_search 合规化、合规搜索规则 |
 | 36.4.2 | 智能上下文压缩 | level 打标 + 实时时间线 + 异步事件驱动动态压缩 + 首次坍塌即压缩 |
+| 36.5 | 学习闭环 + 思路纠偏 | swarm 子进程接入 long_term/mid_term/ingest_solution；LTM embedding 统一 256 维（修复 RAG 静默失效）；压缩器按 step_no 匹配修复裁剪错位；意图级重复检测；交互回显型程序纠偏 + web_search 使用引导 |
 
 > 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、13.4 镜像、13.5 LWE 工具、13.6 合规搜索；迭代验证记录见 `dev-notes/`。

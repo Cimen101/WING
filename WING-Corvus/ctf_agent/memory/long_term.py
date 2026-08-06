@@ -78,12 +78,14 @@ class LongTermMemory:
         else:
             self._client = client
 
-        # 显式固定嵌入模型，避免依赖 Chroma 默认 embedding（版本升级可能改变
-        # 默认维度，曾出现 256 维旧集合 vs 默认 384 维冲突导致 RAG 崩溃）。
+        # 显式固定嵌入模型: 与种子 collection 维度一致 (256 维确定性 hash embedding,
+        # 离线可用). 不能依赖 Chroma 默认 embedding — 其维度随版本可能变化 (384 维),
+        # 复用已存在的 256 维 collection 时写入/检索会触发 InvalidDimensionException,
+        # 导致 RAG 检索与自增长全部静默失效.
         if embedding_function is None:
-            from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+            from ctf_agent.memory.embeddings import KeywordHashEmbedding
 
-            embedding_function = DefaultEmbeddingFunction()
+            embedding_function = KeywordHashEmbedding()
         self._embedding_function = embedding_function
         name = collection_name or self.COLLECTION_NAME
         # get_or_create_collection 在不存在时创建，存在时复用

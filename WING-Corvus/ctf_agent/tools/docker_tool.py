@@ -676,6 +676,7 @@ class DockerClient:
         workspace_dir: str = "",
         shared_dir: str = "",   # S13: 同题 agent 共享目录 (宿主目录 bind 挂载 /shared, 空则跳过)
         force_reset: bool = False,  # S13: 同题重做强制 rm+run 全新环境 (默认复用)
+        env: dict[str, str] | None = None,  # 容器创建时注入的环境变量 (如 FLAG, 避免 flag 文件泄露)
     ) -> None:
         self.image = image
         self.container_name = container_name
@@ -692,6 +693,8 @@ class DockerClient:
         self.shared_dir = shared_dir
         # S13 同题重做强制重置: True = ensure 时若容器存在也 rm+run (重做要全新环境)
         self.force_reset = force_reset
+        # 容器创建时注入的环境变量 (如 FLAG=xxx), 供需从环境读 flag 的题目使用
+        self.env = dict(env or {})
         # S3 资源配额: Profile 表 + 显式覆盖（容器创建时应用, §13.2）
         self.cpu_cores, self.mem_limit = resolve_quota(
             cpu_profile, cpu_cores=cpu_cores, mem_limit=mem_limit)
@@ -768,9 +771,8 @@ class DockerClient:
                 # 或附件目录已指定但容器未挂载 /challenge/workspace → 必须重建,
                 # 否则 agent 在容器内找不到附件, 白白浪费整题时间.
                 if self.workspace_dir and not self._has_workspace_mount():
-                    self._logger.warn(
-                        f"容器 {self.container_name} 缺少 /challenge/workspace 挂载"
-                        f" (workspace_dir={self.workspace_dir}), 重建")
+                    print(f"[Docker] Warning: 容器 {self.container_name} 缺少 /challenge/workspace 挂载"
+                          f" (workspace_dir={self.workspace_dir}), 重建")
                     self._backend.remove(self.container_name)
                     return self._run_new(effective_task)
             running = self._container_running()
@@ -814,11 +816,46 @@ class DockerClient:
         # GCTF25 本地靶机访问: agent 容器需经 host.docker.internal 连接宿主映射的靶机端口
         # (Docker Desktop / Linux 容器均支持 host-gateway 写法, 无副作用)
         flags += ["--add-host", "host.docker.internal:host-gateway"]
+        # 容器创建时注入环境变量 (如 FLAG=xxx): -e KEY=VAL, 避免 flag 以文件形式暴露给 agent
+        for k, v in self.env.items():
+            flags += ["-e", f"{k}={v}"]
         if not self._backend.create_and_start(
                 self.container_name, self.image, flags, ["sleep", "infinity"]):
             return False
         self._container_ok = True
         self._task_mismatch = False
+        
+        # Sprint 36.6: 容器初始化 — 自动安装缺失工具
+        # 读取 setup script 并在容器内执行 (幂等, 可重复执行)
+        try:
+            # 使用 pathlib (已导入) 构建路径
+            _script_dir = Path(__file__).resolve().parent.parent.parent / "scripts"
+            setup_script_path = _script_dir / "container_setup.sh"
+            
+            if setup_script_path.exists():
+                print(f"[Docker] Running container setup script...")
+                with open(setup_script_path, "r") as f:
+                    setup_content = f.read()
+                # Base64 编码后写入容器并执行
+                import base64 as _b64
+                script_b64 = _b64.b64encode(setup_content.encode("utf-8")).decode("ascii")
+                setup_cmd = (
+                    f"echo '{script_b64}' | base64 -d > /tmp/_ctf_setup.sh && "
+                    f"chmod +x /tmp/_ctf_setup.sh && "
+                    f"/tmp/_ctf_setup.sh 2>&1 | tail -20 && "
+                    f"rm /tmp/_ctf_setup.sh"
+                )
+                try:
+                    self._backend.exec_run(
+                        [self.docker_cmd, "exec", self.container_name, "bash", "-c", setup_cmd],
+                        timeout=300,
+                    )
+                    print(f"[Docker] Container setup completed")
+                except Exception as _e:
+                    print(f"[Docker] Container setup exec failed (non-critical): {_e}")
+        except Exception as e:
+            print(f"[Docker] Container setup failed (non-critical): {e}")
+        
         return True
 
     def _container_task_label(self) -> str:

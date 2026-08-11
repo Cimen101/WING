@@ -708,6 +708,50 @@ analyze(trajectory)
 
 `react.py` 的 `_post_to_bus` 在将巡查 belief_state 的 FACT/LIKELY 发布到兄弟总线时，**FACT 级同时同步上报总指挥**（`report_to_commander(report_type="clue")`）；LIKELY 只进兄弟总线，控制汇报噪音。
 
+### 5.13 巡查指导器触发规则（Sprint 41）
+
+巡查指导器的触发时机采用"**首次 10 步 + 上一次注入结果 + 5 步**"的规则（间隔钳制 5~10 步）：
+
+- **首次巡查**：第 10 步（`first_check=10`，给足侦查空间）。
+- **常规巡查**：> 上一次注入结果之后 `check_interval=5` 步（范围钳制 5~10）。
+- **异常触发**：连续错误步 ≥ max_errors（实时传入）。
+- **接近上限**：倒数 `early_exit_steps=20` 步内（检查是否需要扩展）。
+
+### 5.14 MUST 强制跳转机制（FORCE）
+
+巡查指导器干预机制升级：协调器指令标记为 `[MUST]`，Agent 必须立即执行，不得自行决策；连续 2 步未执行协调器指令则强制跳转。
+
+- **`_must_ignore_count` 计数器**：连续 ≥2 步未执行 MUST 时，升级为 `[FORCE]` 强制跳转（空 action 或未执行指令均计入计数器）。
+- **MUST 指令持续注入 6 步**：确保 Agent 收到并执行，防止丢包。
+- **FORCE 触发**：协商器强制 Agent 跳转到指定方向，Agent 不得再自行决策。
+
+### 5.15 低效命令重复与工具过度使用检测
+
+巡查器新增两个检测维度，避免 agent 在低效命令和过度使用单一工具上浪费步数：
+
+- **低效命令重复检测**（`_check_execution_starvation` 扩展）：检测最近 5 步中**同一工具名出现 ≥3 次且参数相似**的情况。**排除通用工具**（`ssh_exec`/`ssh_python`/`docker_exec` 等），避免误伤正常执行——这些工具是解题主通道，不应计入重复。
+- **工具过度使用检测**：
+  - **ssh_exec 过度使用**：当某 agent 大量使用 `ssh_exec` 执行手动命令（>60% 的工具调用）时，警告其应使用专用工具（`binary_analyze`/`binary_deep_analyze`/`angr` 等）。
+  - **vision_analyze 过度使用**：`vision_analyze` 调用 ≥3 次时警告，提示其无法分析二进制数据，应改用专用逆向工具。
+
+这些检测作为 L1-B 软线索传给 L2 LLM 判断，或直接产生 MUST 干预（低效命令重复且无进展时）。
+
+### 5.16 已解出未提交检测（_check_solved_not_submitted）
+
+复盘根因（ida-reverse-course CH8 junkcode）：aggressive 在 step 11-14 已通过 movabs 立即数完整解析出 flag，但总指挥阶段停在 P2（指令始终为 3），巡查判"接近还原"而非"已还原"，从未下发提交指令 → agent 继续 xxd 验证直到 1200s 超时。该检测作为 L1 规则级（确定性，不依赖 L2 LLM 恰好判"已还原"）识别"flag 已解出但未提交"状态。
+
+**触发条件（全部满足）**：
+
+1. 最近 lookback 步的 thought/observation 中出现**完整 `flag{...}` 候选**（regex 提取）；
+2. 候选有验证信号（观测含程序接受输出 Correct!/Right!/验证通过 等，或 flag 明文/编码变体出现在观测）；
+3. 最近窗口**无提交意图**（无 Final Answer / submit_flag / check_findings）；
+4. agent 仍在反复做提取类工具（strings/objdump/xxd/file/binary/hex/grep/head ≥2 步）。
+
+**双分支干预**：
+
+- **已验证**（条件 2 满足）→ MUST 级强制提交：`已解出未提交: 你已提取到完整 flag 候选 {flag} 且已通过工具观测验证... 直接提交`，附 flag 文本供 agent 直接使用；
+- **未验证**（仅 thought 拼出候选、无程序验证）→ 引导"运行程序验证或直接提交试错"：`flag 候选已拼出但未验证: ... 立即用 wine/直接运行程序输入该 flag 验证 (观察 Correct!/Wrong!); 若程序无法运行, 直接 Final Answer 提交该候选 flag 让系统判定. 不要继续无限 objdump/strings 静态分析 — 静态拼接受 movabs 边界字节重叠 (如 junnk) 干扰时, 唯一可靠判定是运行程序或提交试错.`——破解"静态拼接疑义（movabs 边界重叠）→ 反复反汇编永不提交"死局。
+
 ---
 
 ## 6. 核心模块：战术层 ReAct 主循环
@@ -901,18 +945,22 @@ while not stop_event.is_set():
 
 ### 8.2 设计：两次验证，均通过才放行提交
 
-`ctf_agent/agent/flag_verify.py`（约 246 行）的 `FlagVerifier.verify(flag_candidate, steps)`：
+`ctf_agent/agent/flag_verify.py` 的 `FlagVerifier.verify(flag_candidate, steps)`：
 
 ```
 verify(flag, steps)
- ├─ ① 代码机制 1: flag 必须出现在某一步的 Observation 中
- │     （flag 来自工具输出, 而非 LLM 记忆/编造; 优先匹配完整 flag,
- │       允许匹配花括号内核心片段 ≥8 字符防观测截断误判）
+ ├─ ① 代码机制 1: flag 必须"可归因于某步工具观测"
+ │     （flag 来自工具输出, 而非 LLM 记忆/编造; 来源搜索支持 4 级证据形态,
+ │       覆盖 reverse 题二进制提取与拼接式 flag, 详见 8.3）
  ├─ ② 代码机制 2: 可疑渠道拦截
  │     flag 出现的步骤若来自可疑外部题解渠道（GitHub/raw.githubusercontent/
  │     api.github/搜索引擎/官方题解目录 等域名关键词）且 action/输入含
  │     writeup/solution/flags/README/题解 等关键词 → 判定非正常渠道, 拒绝
- ├─ ③ LLM 审查（仅代码机制通过后）:
+ ├─ ③ 代码机制 3: 自导自演检测（程序验证豁免）
+ │     脚本/命令输入中出现 flag 或其编码变体 → 疑似硬编码自导自演;
+ │     但若该步为"用 flag 运行程序验证"（输入含运行特征 + 观测含程序接受
+ │     信号 Correct!/Right!/验证通过 等）→ 豁免（reverse 题合法验证手段）
+ ├─ ④ LLM 审查（仅代码机制通过后）:
  │     最近 N 步轨迹（Thought/Action/Observation 摘要）交给审查 LLM,
  │     判定 flag 是否来自靶机/附件的真实观测, 是否存在幻觉或外部题解污染.
  │     输出结构化 JSON: {"pass": bool, "reason": str, "confidence": "high/medium/low"}
@@ -921,9 +969,14 @@ verify(flag, steps)
 
 ### 8.3 代码机制细节
 
-- **来源搜索**（`_find_source`）：跳过 is_final 步骤，在 observation 中搜索 flag 子串；优先完整匹配，失败后匹配核心片段（`_flag_core`：花括号内前 8 字符），避免观测被截断导致的误判。
+- **来源搜索**（`_find_all_sources`）：跳过 is_final 步骤，按 4 级优先级搜索观测证据（匹配成功即记录该步为来源）：
+  1. **完整 flag 明文** 或 **flag 编码变体**（`_encode_variants`：连续 hex / 空格分隔 hex / 逗号分隔十进制 / 空格分隔十进制 / `[102, 108, ...]` 列表 / `0x66,0x6c,...` 六种形态——覆盖 objdump/xxd/strings 的二进制提取输出，明文反而缺失的场景）；
+  2. **core 前 8 字符**（`_flag_core`：花括号内内容，防观测截断误判）；
+  3. **core 分段覆盖**（`_split_core`：把 core 拆成滑窗片段，若全部片段分别出现在 ≥2 个不同步骤的观测中 → 拼接式 flag 合法来源，交由 LLM 审查把关）。
 - **渠道分类**（`_classify_channel`）：含 http(s):// → web；含 file_read/file_analyze/strings/cat/unzip/xxd/file /binary → attachment；否则 target。
 - **可疑渠道拦截**（`_suspicious_hit`）：可疑主机（github.com / raw.githubusercontent.com / api.github.com / gist.github.com / gitlab.com / writeup / solver / exploit-db / ctftime）**且**可疑关键词（writeup / solution / solve.py / solver.py / exploit.js / flags.txt / flag.txt / official / 官方 / 题解 / 答案 / README）双命中 → 拒绝；仅访问 GitHub 且带 contents/raw/blob//flags/flag/writeup 也可疑。
+- **自导自演检测**（`_is_program_verify` 豁免）：若来源步的 action_input 含 flag 或其编码变体，判定为"疑似硬编码自导自演"；但该步输入含运行命令特征（wine/./.exe/timeout/|/printf/echo 等）**且**观测含程序接受信号（correct/right/验证通过/成功/win/passed 等）→ 视为"用 flag 运行程序验证"（reverse 标准流程），豁免。
+- **拒绝软锁**（`_rejected_flags`）：被拒 flag 记忆为"软锁"——**只有当前轨迹仍无任何观测证据时**才拒绝重复提交；一旦后续出现新证据（明文或编码变体），自动解除拉黑允许重新验证。避免 reverse 题"先 echo 验证被误拒 → 之后干净提取同 flag 也被永久拦截"的死锁（ida-reverse-course CH4 三路全超时根因）。
 
 ### 8.4 LLM 轨迹审查
 
@@ -1091,7 +1144,7 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 | `ctf_agent/commander/__init__.py` | 总指挥包导出 | 模块化组织 |
 | `ctf_agent/commander/commander.py` | 总指挥核心类（约 1100 行） | 三层协作的顶层指挥 |
 | `ctf_agent/commander/prompts.py` | 总指挥 5 个 prompt 模板 | 指挥决策的 LLM 依据 |
-| `ctf_agent/agent/flag_verify.py` | 反幻觉 flag 验证系统（约 246 行） | 拦截外部题解污染 |
+| `ctf_agent/agent/flag_verify.py` | 反幻觉 flag 验证系统（证据链：编码变体/程序验证豁免/拒绝软锁/拼接覆盖 + LLM 审查） | 拦截外部题解污染与拼接死锁 |
 
 ### 10.2 总指挥 Commander（新增）
 
@@ -1173,6 +1226,22 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 | react.py | RAG 延迟到侦查阶段后基于实际观测注入 | 取代任务开始时基于 task 描述的静态匹配（防题目混淆根因） |
 | routed.py | go 端点 reasoning_effort 强制 none | 修复 go 端点思考链无界生成撞满 max_tokens（9 组受控实验定论） |
 | routed.py | LLM_PROVIDER=go 只走 go 套餐，禁系统代理直连 | 国内部署直连快且稳定（历史复盘：走代理每步 LLM 卡 90s+） |
+| routed.py | API 分级重试策略（5s×3 + 30s） | 调试期 API 不稳定时先快重试应对网络波动，再慢重试应对限流 |
+| binary_deep_analyze.py | 新增 gameboy/ieee/constants 模式 | 支持 GameBoy ROM 分析、IEEE 浮点逆向、大整数常量提取 |
+| cgb_solve.py | 新增 GameBoy 复合求解工具 | 三级降级策略（静态分析→pyboy→WRAM 数据），自动 Feistel 解密 |
+| fluffy_solve.py | 新增 Flutter APK 复合求解工具 | 自动提取加密数据+暴力破解 PIN，三段 ~15 分钟 |
+| tool_catalog/tool_catalog.json | 新增工具目录系统 | 22 工具描述 + 9 工具链 + 13 场景映射，按 domain 注入 tactic 层 |
+| kb.py | 新增 tool_catalog 注入 | `_load_tool_catalog` + `_format_tool_catalog` 按 domain 过滤注入 |
+| container_setup.sh | 新增容器初始化脚本 | 幂等预装系统工具、Python 包、Ruby gems |
+| docker_tool.py | 新增 env 参数注入 | 容器创建时注入环境变量，避免 flag 文件泄露 |
+| coordinator.py | 新增 MUST [FORCE] 强制跳转 | 连续 ≥2 步未执行 MUST 升级为 FORCE 阻断 |
+| coordinator.py | 新增低效命令重复检测 | 同工具 ≥3 次 + 参数相似，排除通用工具 |
+| coordinator.py | 新增工具过度使用检测 | ssh_exec >60% 警告、vision_analyze ≥3 次警告 |
+| role_guides/agents/*.md | 新增 42 个 agent 执行策略文件 | 按题型×阶段×风格精准匹配，含工具预装提示 |
+| brainteaser/detection.md | 新增脑洞题特征库 | 强/弱特征 + LLM 二次判断机制 |
+| brainteaser/general.md | 新增脑洞题通用策略 | 12 个创意模板 + 发散策略 |
+| curate.py | 知识库四层重构 | packages/role_guides/playbooks+pitfalls/patterns/archived |
+| kb.py | 知识库检索增强 | infer_phase + merge_playbook 查重合并 + 角色化注入 |
 
 ### 10.9 演进验证与验收清单
 
@@ -1333,6 +1402,43 @@ WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为�
 - **patterns 增强**：成功轨迹 → 写入 `patterns/skill_library.json`（含 `last_verified_at` 等增强字段）
 - 离线批处理：`python -m ctf_agent.knowledge.curate --traces <dir>`（用历史轨迹补沉淀）
 
+### 12.8 role_guides 重构：总指挥分工 + 解题器执行策略（Sprint 37）
+
+`role_guides/` 从"每题型 1 个"重构为**两级角色分离**：
+
+- **`{type}.md`**（总指挥分工经验，7 个：web/pwn/crypto/reverse/misc/forensics/osint）：注入 commander/strategy 层，含 P1-P4 阶段分工策略、题型特点、关键规则、脑洞覆盖提示。
+- **`agents/{type}-{phase}-{style}.md`**（解题器执行策略，7 题型 × 4 阶段 × 3 风格 = 84 个）：注入 tactic 层，按 `{ctype}-{phase}-{style}` 精准匹配，含核心任务、执行策略、脑洞题适配、该阶段特有技巧（自学习沉淀）。
+- 维护规则：限字数、新经验**替换**旧内容（不追加）、纠错优先、去重。
+- **工具预装提示**：42 个 agents 文件注入"工具预装"提示（严禁用 pip install / apt-get install 重新安装已预装工具，避免浪费步数）。
+
+### 12.9 脑洞题判断与策略（Sprint 40）
+
+脑洞题（brainteaser）能力升级，含判断机制与通用策略：
+
+- **判断机制**（强/弱特征 + LLM 二次判断）：
+  - **强特征**：题目描述含"奇怪/特别/不寻常/脑筋急转弯/创意"等，或附件类型非常规（非标准 ELF/APK/Web）。
+  - **弱特征**：常规题型但解法需要创造性思维（如 GameBoy ROM 逆向、脑洞工坊）。
+  - **LLM 二次判断**：规则特征不足以确定时，由 LLM 结合题目描述和已知模式二次判断。
+- **特征库**：`brainteaser/detection.md`（判断用特征）+ `brainteaser/general.md`（通用策略），注入 commander/strategy 供判断与指导。
+- **自学习闭环**：解题后自动更新特征库、策略和案例，形成"特征识别 → 策略选择 → 解题 → 沉淀"闭环。
+
+### 12.10 知识库四层重构（Sprint 40.5）
+
+`data/knowledge/` 重构为四层知识体系：
+
+| 层 | 内容 | 维护方式 |
+|----|------|----------|
+| `packages/` | 外部包（只读，已解压 10 包 + index.json） | 只读 |
+| `role_guides/` | 题型分工指南（每题型 1 个 + 每题型×风格 1 个，P1-P4 分阶段含推进标准） | 只改不增，P1-P4 分阶段 |
+| `playbooks/` + `pitfalls/` | 分目录套路 + 避坑（auto.md 由 curator 生成） | curator 写入 |
+| `patterns/` | 抽象经验（skill_library.json） | curator 写入 |
+| `archived/` | 旧版本 MD 封存 | 只读 |
+
+- `ctf_agent/knowledge/kb.py`：`KnowledgeBase` 统一检索（retrieve(task,type,role,style,phase) + infer_phase + merge_playbook 查重合并）。
+- `ctf_agent/knowledge/curate.py`：skill_curator 管线 extract→verdict→refine→merge→compress→persist + finally 兜底落盘 curator_log.jsonl。
+- 注入点：react.py（战术层阶段化 mid-solve）/ coordinator.py（战略层 _query_knowledge）/ commander.py（总指挥 assign_initial 外部包主题）。
+- ⚠️ `ctf_agent/knowledge` 包原导出（ARSENAL/format_arsenal/list_categories）必须保留合并到 `__init__`。
+
 ---
 
 ## 13. 工具层设计
@@ -1352,14 +1458,51 @@ WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为�
 | 通用执行 | ssh_exec / ssh_python / docker_exec / docker_python / ssh_upload / docker_upload / file_read / file_analyze |
 | Web | http_request / web_recon / web_fingerprint / web_dirscan / lfi_scanner / sqlmap（总线） / encoding_helper |
 | Pwn | pwn_checksec / pwn_cyclic / pwn_ropgadget / pwn_exploit / exploit_template |
-| Reverse | angr_symbolic_exec / binary_analyze / binary_tool / apk_decompile / feistel_tool / mem_xor_analyze |
+| Reverse | angr_symbolic_exec / binary_analyze / binary_tool / apk_decompile / feistel_tool / mem_xor_analyze / **binary_deep_analyze**（深度分析，支持 gameboy/ieee/constants 模式）/ **binary_constants**（大整数常量提取）/ **cgb_solve**（GameBoy ROM 复合求解）/ **fluffy_solve**（Flutter APK 复合求解） |
 | Crypto | crypto_rsa / crypto_classic / des_cryptanalysis / feistel_decrypt / ecdsa_nonce_reuse / sage_common_d_attack / **lwe_decode**（已知 \|e\| 恢复 s） |
-| Misc/Forensics | osint_exiftool / osint_steghide / osint_binwalk / osint_tshark / vision_analyze / ocr / mem_xor_tool |
+| Misc/Forensics | osint_exiftool / osint_steghide / osint_binwalk / osint_tshark / vision_analyze / ocr / mem_xor_tool / **bkcrack_attack**（zipCrypto 已知明文攻击） |
 | OSINT / 通用查阅 | web_search（通用技术查阅 + 合规护栏）/ osm_geocode / reverse_image_search / vision_analyze |
 | 协作 | share_finding / check_findings（总线）/ shared_fs_tool（共享文件目录） |
 | 记忆 | remember_fact（中期记忆） |
 
-### 13.4 Docker 执行链（WING-Goose Item 5）
+### 13.4 深度逆向分析工具（binary_deep_analyze）
+
+`ctf_agent/tools/binary_deep_analyze.py`：增强版逆向分析工具，`_MAX_OUTPUT=8000`，支持 4 种分析模式：
+
+- **`mode='auto'`**（默认）：自动检测模式，通过 `_detect_mode` 判断（`file` 命令 + ROM 头 Nintendo logo 检测 GameBoy；ELF/executable 判 IEEE；否则 constants）。
+- **`mode='gameboy'`**：GameBoy ROM 分析——ROM 头部解析（标题/映射器/CGB 标志/校验和）、CTF/flag 模式搜索（8 种编码）、tile 数据唯一性分析、pyboy 可用性检测、CGB Feistel 解密尝试、自动生成求解脚本。
+- **`mode='ieee'`**：IEEE 754 浮点逆向——ELF section 解析、128bit+ 大整数扫描、float64 特殊值检测、objdump 大 hex 常量提取、angr 符号执行尝试（60s 超时）。
+- **`mode='constants'`**：常量深度提取——objdump 段 dump + 全二进制 128bit/96bit+ 大整数扫描。
+
+### 13.5 CGB GameBoy 复合求解工具（cgb_solve）
+
+`ctf_agent/tools/cgb_solve.py`：针对 GBC ROM 逆向题（如 gctf.gb），加密 flag 存于 WRAM bank 1（运行时地址），key 来自 palette 索引。策略三级降级：
+
+1. **纯静态分析**：从 ROM 文件搜索 40 字节加密 flag 段 + 40 字节 palette key，Feistel 解密 + 字符映射输出。
+2. **pyboy 模拟降级**：headless 加载 ROM，运行若干帧后 dump WRAM 精确数据再解密。
+3. **WRAM 数据降级**：使用已知的 MAME 调试器 dump 数据（`_KNOWN_ENCRYPTED_FLAG_HEX` + `_KNOWN_KEY_HEX`）直接解密。
+
+Feistel 轮函数：字节循环移位（移位方向/次数由子密钥 bit 控制），16 轮，palette 数据来自 GBC boot ROM，字符映射表 `0x09-0x22→A-Z, 0x23-0x3c→a-z, 0x3d-0x46→0-9, 0x47-0x4c→@_-{}?`。
+
+### 13.6 Flutter APK 复合求解工具（fluffy_solve）
+
+`ctf_agent/tools/fluffy_solve.py`：针对 Flutter APK 逆向题（如 rev-fluffy），从 `lib/x86_64/libapp.so` 提取 base62 编码的加密 flag 片段和时间戳，运行 crack.py 暴力破解 PIN 码。
+
+- 已知 3 对密文+时间戳（Google CTF 2025 官方数据），优先使用；手动提供参数时校验数量匹配。
+- crack.py 脚本基于 Google CTF 官方 solution：TEA 加密 + 自定义 token 生成 + 8 种旋转模式，暴力破解 PIN（0-9999）。
+- 每个密文片段约 4-6 分钟暴力破解，三段总计约 15 分钟。
+- 参数：`apk_path`（必填）、`libapp_path`（可选，跳解析压）、`timestamps`/`ciphertexts`（手动 fallback，JSON 数组）。
+
+### 13.7 工具目录系统（tool_catalog）
+
+`data/knowledge/tool_catalog/tool_catalog.json`：完整工具目录，包含 22 个工具的详细描述（速度/功能/用法/参数/场景）+ 9 条工具链 + 13 条场景映射。
+
+- 每个工具含：`name`、`speed`、`function`、`usage`、`params`、`scenarios`、`domain`、`tool_chain`。
+- 工具链示例：`reverse_gameboy: binary_deep_analyze(mode='gameboy') → cgb_solve → pyboy`。
+- `kb.py` 的 `_format_tool_catalog` 负责按 domain 过滤注入 agent system prompt（仅 tactic 层），`_load_tool_catalog` 启动时加载 JSON。
+- 预装工具提示已注入 42 个 agent 文件（`data/knowledge/role_guides/agents/*.md`）："angr/pwntools/jadx/apktool/sage/fpylll/tshark/binwalk/exiftool/volatility/ocr 等已预装，严禁用 pip install / apt-get install 重新安装"。
+
+### 13.8 Docker 执行链（WING-Goose Item 5）
 
 - `DOCKER_ENABLED=true`（默认）→ Docker Desktop 容器替代 ssh 执行层；daemon 不可用自动降级到 ssh；KALI_ENABLED=false（默认）时关闭 Kali 路由，纯 Docker 执行层。
 - 默认镜像 `wing-goose:v4`（补装 fpylll/angr/torch 等 6 库 + 预封装入口）；v1 以 latest 标签保留作为回滚点。
@@ -1368,18 +1511,36 @@ WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为�
 - 附件宿主目录 → 容器 `/challenge/workspace`；同题共享目录 → 容器 `/shared`；`force_reset=true` 强制全新环境。
 - 默认镜像公开于 `ghcr.io/cimen101/wing-goose:v4`（`docker pull` 即用）。
 
-### 13.5 LWE 解码工具（tools/lwe_tool.py）
+### 13.9 LWE 解码工具（tools/lwe_tool.py）
 
 - 适用：已知误差向量绝对值 `|e|`（符号未知）的 LWE 实例，恢复私钥 s
 - 原理：`b = A·s + e (mod q)`，已知 `|e|` 时 `e/|e| ∈ {±1}` 是超短向量 → 按幅度缩放的嵌入格 + LLL 恢复 e → 线性解 s
 - 两种用法：内联参数 / **数据文件模式**（`data_file`，大矩阵场景）；**数学自动验证**（A·s+e≡b mod q 逐分量成立才返回成功，杜绝误报）
 
-### 13.6 合规联网搜索（web_search + 反 writeup 护栏）
+### 13.10 合规联网搜索（web_search + 反 writeup 护栏）
 
 - `web_search` 工具泛化为通用技术查阅（非仅 OSINT），可查算法原理、库/工具用法、协议/格式规范
 - **工具级护栏**：查询含 writeup / solution / 题解等关键词直接拒绝，提示改为通用技术关键词
 - **提示词级护栏**（`COMPLIANCE_SEARCH_RULES`）：禁止搜索题目名 / 比赛名+题目名 / 出题人题解 / 官方解法；只允许通用技术原理
 - **使用引导**（Sprint 36.5）：明确允许搜索**交互回显型程序机制**（如"CTF 程序输出随机数猜数字交互"、"brainfuck interpreter guess the number"）——这类题正解常为把本地运行程序得到的答案发回远程，卡住时可据此快速换思路，而不是反复逆向静态分析
+
+### 13.11 容器初始化脚本（container_setup.sh）
+
+`scripts/container_setup.sh`：容器创建时自动运行的幂等初始化脚本，覆盖系统工具、Python 包、Ruby gems 的预装：
+
+- **系统工具**：radare2/binwalk/zsteg/bulk-extractor/patchelf/upx-ucl/ghidra/qemu-user/android-tools/apktool/jadx、音频（sox/audacity）、文档（libreoffice）、数据库、网络、调试、压缩、二维码、隐写、Web 扫描工具等。
+- **Python 包**：pwntools/z3-solver/angr/claripy/fpylll/ropper、密码学（pycryptodome/sympy/gmpy2）、逆向（capstone/unicorn/keystone）、OSINT、取证、Web、二进制分析等。
+- **Ruby gems**：zsteg/dnscat。
+- 幂等设计：`command -v` 检查后安装，所有安装失败 `|| true` 容忍。
+- 扩展（Sprint 后续）：可注入附件依赖预检、环境变量。
+
+### 13.12 Docker 环境变量注入
+
+DockerClient 支持 `env` 参数，在容器创建时注入环境变量（如 `FLAG=xxx`），避免 flag 以文件形式暴露给 agent：
+
+- `DockerClient.__init__(env=dict)` 存储环境变量。
+- `_run_new` 方法中为每个 `key=value` 添加 `-e KEY=VAL` 到 docker run flags。
+- `solve.py` 从任务 JSON 的 `env` 字段传递到 DockerClient，附件目录不含 `flag` 文件（需通过环境变量注入的题目，如 multiarch-1 的 `FLAG` 环境变量）。
 
 ## 14. LLM 路由与容错
 
@@ -1428,6 +1589,15 @@ WING-Goose（2026-08）起 `LLM_PROVIDER=go`（默认）时：**只走 go 套餐
 ### 14.6 LLM 调用异常容错（战术层）
 
 `react.py` 每步 LLM 调用三级容错：① 失败 → sleep(2) 重试 → ② 再失败 → sleep(2) 再重试 → ③ 降级 `model_tier="pro"` 重试 → ④ 全部失败 → 注入提示跳过本步继续（不崩溃，breaker 熔断兜底）。
+
+### 14.7 API 稳定性重试策略（Sprint 40）
+
+针对 API 不稳定的调试场景，采用**分级恢复策略**（先快速应对网络波动，再慢速应对限流）：
+
+- **第一级（应对网络波动）**：5 秒间隔快速重试 3 次——网络抖动通常短暂，快重试可快速恢复。
+- **第二级（应对限流/持续故障）**：30 秒间隔慢速重试——限流需要冷却时间，过快重试触发更严格限流。
+- 策略优先级：先 5s×3 快重试，全部失败转 30s 慢重试；仍失败则跳过本步继续（不阻塞主循环）。
+- 与 §14.2 动态 provider 健康状态协同：结合 provider 跳过期（120s）与重试计数，避免对反复失败的 provider 死等。
 
 ---
 
@@ -2175,5 +2345,7 @@ WING-Corvus（渡鸦）── 协作小队（当前最新版）
 | 36.5 | 学习闭环 + 思路纠偏 | swarm 子进程接入 long_term/mid_term/ingest_solution；LTM embedding 统一 256 维（修复 RAG 静默失效）；压缩器按 step_no 匹配修复裁剪错位；意图级重复检测；交互回显型程序纠偏 + web_search 使用引导；知识库重构：role_guides 全题型分阶段注入（只注入当前阶段）+ skill_curator 接入 solve.py finally（LLM 分阶段提炼 + role_guides/patterns 更新 + traces 归档） |
 | 36.5.1 | 状态切换机实时切换修复 | 战术层解出 flag/提交失败实时上报（flag/submit_fail 两类新汇报，直通总线不依赖战略层巡查）；`_phase_advance_rule` 单级推进防"跳 P4"；P2→P3 支持 flag=最强验证证据（跳过 LLM 确凿分析防卡死 P2）；P4→P3 提交失败回退补齐（`_failed_flags` 防死循环）；总指挥循环心跳日志（1.5s 轮询 + 15s HEART + 异常可见） |
 | 36.5.2 | 单路先行 + 任务禁忌 + P1 限时 | 严格落实 docs/阶段式协调.md：directive 新增 forbidden（任务禁忌按阶段模板）；任务完成闭环（`_task_done` 等待新任务抑制空转）；P1 单路先行（完成侦查的路单独下发 P2 先行任务/含 flag 直接 P3 先行/先行 P2 满足条件升级 P3，全局阶段不变）；P1 严格限时 60-120s（LLM 定制+难度兜底，仅 P1 有超时，P2/P3/P4 按文档切换不设限时）；全局 P1→P2 广播跳过先行路 |
+| 37 | FlagVerifier 证据链升级（reverse 提取场景） | `_find_all_sources` 四级证据形态：完整明文 / 编码变体（hex/空格hex/十进制字节列表/0x 列表，覆盖 objdump/xxd 提取）/ core 前 8 字符 / core 分段覆盖（拼接式 flag）；`_is_program_verify` 程序验证豁免（echo flag \| wine + Correct! 不再误判自导自演）；`_rejected_flags` 改软锁（有新证据即解除拉黑，破解"先误拒后永久拦截"死锁）；`_split_core` 滑窗分段覆盖。验证：ida-reverse-course CH4（maze）从三路 1207s 超时 → conservative 241s 解出 |
+| 37.1 | 已解出未提交检测 | `_check_solved_not_submitted` L1 规则级检测：完整 flag 候选 + 验证信号 + 无提交意图 + ≥2 步提取工具 → 双分支干预（已验证→MUST 强制提交；未验证→引导运行程序验证或直接提交试错，解释 movabs 边界字节重叠如 junnk）。验证：CH8（junkcode）从三路 1207s 超时 → conservative 650.9s 解出 |
 
 > 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、13.4 镜像、13.5 LWE 工具、13.6 合规搜索；迭代验证记录见 `dev-notes/`。

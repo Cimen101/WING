@@ -67,6 +67,9 @@ class CoordinatorGuidance:
     # Sprint 34: 双系统 (快思考主LLM × 慢思考巡查器) — 非创新风格的"下一步战略方向"
     # 仅在 should_intervene=true 时随 guidance 注入 (沉默原则: 方向未偏移不注入任何内容)
     strategic_direction: str = ""
+    # Sprint 38: MUST 强制跳转 — 当 MUST 指令被连续忽略 ≥2 步时,
+    # 强制 agent 立即执行 MUST 指令, 值为 "EXECUTE_MUST_IMMEDIATELY"
+    force_reply: str = ""
 
 
 # ── LLM 分析 prompt 模板 ──────────────────────────────────────
@@ -398,7 +401,7 @@ _STYLE_COORDINATOR_SECTIONS = {
 7. **沉默优先**: 只要 Agent 在产出新的 observation / 在推进, 保持沉默.
 """,
     "innovative": """
-## 风格: 创新 (Innovative) — 巡查适配 (第 8.3 节): 双轨输出
+## 风格: 创新 (Innovative) — 巡查适配 (第 8.4 节): 双轨输出 + 发散增强
 
 你的分析必须包含**两个轨道**, 缺一不可:
 
@@ -406,12 +409,21 @@ _STYLE_COORDINATOR_SECTIONS = {
 **此风格不使用 strategic_direction** (方向深化由创意灵感板承担).
 
 **轨道 B — 发散** (创造性灵感板): **无论是否干预**, 都必须产出 2-3 条 `creative_hints`。
-参照创造性思路 5 模板, 结合轨迹给出具体、可执行的探索建议 (不是空话):
-1. **目标反转**: 解密/验证卡住 → "也许该文件不是密文而是 key?"
-2. **空间重估**: 爆破太慢 → "实际 key 空间可能远小于名义位宽?"
-3. **代数结构**: 算法复杂 → "找逆变换闭式解而非枚举?"
-4. **侧信道/内嵌**: 表面无线索 → "rodata 中是否有未引用常量/表?"
+参照**创造性思路 12 模板**, 结合轨迹给出具体、可执行的探索建议 (不是空话):
+1. **目标反转**: 解密/验证卡住 → "也许该文件不是密文而是 key?" / "加密器可能反过来是解密器?"
+2. **空间重估**: 爆破太慢 → "实际 key 空间可能远小于名义位宽?" / "是否遗漏了某个导出或截断?"
+3. **代数结构**: 算法复杂 → "找逆变换闭式解而非枚举?" / "能否用数学性质绕过暴力?"
+4. **侧信道/内嵌**: 表面无线索 → "rodata/未引用常量/隐式表/字符串偏移中是否有隐藏数据?"
 5. **线索交叉**: 零散发现 → "把 step N 与 step M 的发现合并成一个假设"
+6. **诱饵识别**: 提取到 flag 但格式不符 → "很可能是诱饵, 真实 flag 需不同提取参数/不同嵌入位置?"
+7. **元数据挖掘**: 文件常规分析无果 → "检查文件尾部/EXIF/注释/版本信息/生成器标记?"
+8. **非标准格式**: 扩展名误导 → "`file` 看到的真实类型是什么? 是否被改过 magic?"
+9. **多层编码**: 解出一层像乱码 → "这层结果可能是另一层编码的输入? 继续解?"
+10. **逆向推导**: 有目标输出 → "从输出格式反向推断输入/密钥结构?"
+11. **组合攻击**: 多个弱线索 → "单看都不够, 组合起来是否满足某个已知攻击模型?"
+12. **资源-数学权衡**: 计算受限 → "能否用数学简化 (生日/格/中国剩余) 替代暴力?"
+
+**创新被困分析 (第 8.4 新增)**: 当轨迹显示创新 Agent 在**主方向受阻** (连续 ≥3 步产出无效 observation, 或同一假设反复失败), creative_hints 必须**从 12 模板中选取与当前受阻点不同的模板**建议, 明确提示"换一个完全不同的切入角度", 促进真正的发散, 而非在同一角度微调.
 
 要求:
 - creative_hints 每条必须结合当前轨迹的具体情况, 给出可操作的方向, 不少于 1 句.
@@ -458,6 +470,44 @@ class Coordinator:
 
     降级模式 (无 LLM): L1-B 软线索也作为干预依据.
     """
+
+    # Sprint 36.6: 高频 CTF 关键词 — 禁止作为拦截依据 (出现在几乎所有命令中)
+    _HOT_KEYWORDS = frozenset({
+        # 提交/验证相关 (中文)
+        "提交", "检查", "验证", "查找", "读取", "写入", "创建", "删除",
+        # 提交/验证相关 (英文)
+        "flag", "flags", "submission", "submit", "submit_flag",
+        "final", "answer", "final_answer", "答案",
+        # 加密/解密
+        "decrypt", "encrypt", "cipher", "crypto", "加密", "解密",
+        # 密码/密钥
+        "password", "passwd", "密码", "key", "密钥",
+        # 文件/数据
+        "file", "files", "文件", "read", "write", "open", "close",
+        "data", "code", "script", "程序", "运行",
+        # 检查/分析
+        "check", "verify", "验证", "验证flag", "分析",
+        # 二进制
+        "binary", "bin", "elf", "pe", "二进制",
+        # 图片
+        "image", "img", "png", "jpg", "jpeg", "图片",
+        # 字符串/文本
+        "string", "strings", "text", "内容",
+        # 工具/命令
+        "tool", "tools", "command", "命令",
+        # 步骤/动作
+        "step", "steps", "action", "thought",
+        # 题目/附件
+        "challenge", "题目", "附件", "workspace",
+        # 解题/方法
+        "solution", "solve", "解题", "方法",
+        # 分析
+        "analysis", "analyze", "分析",
+        # 其他中文高频词
+        "不要", "不能", "禁止", "避免",
+        # 中文意图词
+        "猜测", "猜测的", "猜想",
+    })
 
     def __init__(
         self,
@@ -517,6 +567,10 @@ class Coordinator:
         self._last_guidance_step: int = 0
         self._last_guidance_action: str = ""  # 上次指导时 agent 的主导工具
         self._last_guidance_priority: str = ""  # Sprint 32.4: 上次指导的优先级 (MUST/SHOULD)
+        # Sprint 38: MUST 强制跳转 — 连续忽略 MUST 指令的步数计数器.
+        # _check_must_noncompliance 每次检测到 MUST 未执行时 +1, 检测未命中时归零.
+        # 当 ≥2 时升级为 [FORCE] 强制干预 (should_intervene=True + force_reply).
+        self._must_ignore_count: int = 0
         # Sprint 31: 禁忌列表 — 已确认无效的操作, agent 再尝试时拦截
         self._forbidden_actions: list[str] = []
         # Sprint 35: 精确签名禁忌 — 死循环自动添加, 用精确匹配避免关键词误伤
@@ -968,7 +1022,14 @@ class Coordinator:
         if sig_hits:
             return f"精确签名禁忌命中: {sig_hits[0][:80]}"
         if act_hits:
-            return f"禁忌列表命中: {act_hits[0][:80]}"
+            # 过滤高频词 — 避免因 "flag" 等常用词误伤
+            filtered = []
+            for f in act_hits:
+                effective = [w for w in f.lower().split() if len(w) > 3 and w not in self._HOT_KEYWORDS]
+                if effective:
+                    filtered.append(f)
+            if filtered:
+                return f"禁忌列表命中(过滤后): {filtered[0][:80]}"
         return ""
 
     def on_tool_error(self, tool: str, error: str = "") -> str:
@@ -1000,21 +1061,108 @@ class Coordinator:
         禁忌列表中的操作 (如"hashcat 爆破 cloud.zip 密码"已被确认无效) 在
         巡查间隔之外也会被拦截, 立即重定向 Agent, 避免继续浪费步数.
         返回拦截提示 (非空 = 应拦截该操作), 空串 = 放行.
+
+        Sprint 36.6 修复:
+        - 中文关键词处理: 增加中文高频词, 避免 "提交/检查/验证" 等常用词误伤
+        - 单一关键词判定: 要求精确短语匹配 (非子串匹配), 避免 "不要提交" 匹配到任何含 "提交" 的操作
+        - 上下文检查: 检查操作是否包含 "提交 flag" 或 "Final Answer" 等明确提交意图
         """
-        # Sprint 33: 异步事件驱动下禁忌列表由后台分析线程并发更新, 快照读取避免迭代竞争
+        # 高频 CTF 关键词已提升为类属性 self._HOT_KEYWORDS (见类定义)
+
+        # 明确的提交意图关键词组合 (必须同时出现才判定为提交)
+        _SUBMIT_INTENT_COMBOS = [
+            {"submit", "flag"}, {"submit_flag"}, {"final", "answer"},
+            {"提交", "flag"}, {"提交", "答案"}, {"提交flag"}, {"提交答案"},
+            {"Final", "Answer"}, {"final_answer"},
+        ]
+        
+        def _has_submit_intent(combined_text: str) -> bool:
+            """检查操作是否包含提交意图."""
+            for combo in _SUBMIT_INTENT_COMBOS:
+                if isinstance(combo, set):
+                    if len(combo) == 1:
+                        # 单元素集合: 检查元素是否在文本中
+                        elem = next(iter(combo))
+                        if elem in combined_text:
+                            return True
+                    else:
+                        # 多元素集合: 检查所有元素是否都在文本中
+                        if all(kw in combined_text for kw in combo):
+                            return True
+                elif isinstance(combo, str):
+                    # 直接字符串
+                    if combo in combined_text:
+                        return True
+            return False
+
+        # Sprint 36.3: 关键词匹配 — 过滤高频词, 要求至少 2 个有效关键词命中
         with self._lock:
             if not self._forbidden_actions:
                 return ""
             forbidden_snapshot = list(self._forbidden_actions)
         combined = f"{action} {action_input}".lower()
+
         for forbidden in forbidden_snapshot:
-            keywords = [w for w in forbidden.lower().split() if len(w) > 3]
-            if keywords and any(kw in combined for kw in keywords):
-                return (
-                    f"⚠️ 拦截: 该操作 '{action}' 已被巡查判定为无效 (禁忌列表: "
-                    f"{forbidden[:80]}). 立即停止, 换一个完全不同的方法. "
-                    f"请重新输出 Thought + Action + Action Input."
+            # 中文特殊处理: 先按中文标点和空格分割
+            import re
+            tokens = [t.strip() for t in re.split(r'[\s，,。、；;：:！!？?《》"\']+', forbidden.lower()) if t.strip()]
+            all_keywords = [w for w in tokens if len(w) > 1]
+
+            effective = [kw for kw in all_keywords if kw not in self._HOT_KEYWORDS]
+
+            # 如果没有有效关键词 (全部是高频词) — 检查是否有明确提交意图
+            if not effective:
+                # 检查操作是否包含 "提交 flag" 等明确提交意图
+                if _has_submit_intent(combined) and any(kw in forbidden for kw in ["提交", "submit", "final_answer"]):
+                    return (
+                        f"⚠️ 拦截: 该操作 '{action}' 已被巡查判定为无效 (禁忌列表: "
+                        f"{forbidden[:80]}). 立即停止, 换一个完全不同的方法. "
+                        f"请重新输出 Thought + Action + Action Input."
+                    )
+                continue
+
+            # 至少 2 个有效关键词命中 (要求所有有效关键词都命中)
+            if len(effective) >= 2:
+                if all(kw in combined for kw in effective):
+                    # 额外检查: 如果禁忌操作包含 "提交" 相关词, 必须有明确提交意图
+                    forbidden_has_submit = any(kw in forbidden for kw in ["提交", "submit", "final_answer", "Final Answer"])
+                    if forbidden_has_submit and not _has_submit_intent(combined):
+                        continue  # 无提交意图, 放行
+                    return (
+                        f"⚠️ 拦截: 该操作 '{action}' 已被巡查判定为无效 (禁忌列表: "
+                        f"{forbidden[:80]}). 立即停止, 换一个完全不同的方法. "
+                        f"请重新输出 Thought + Action + Action Input."
+                    )
+            elif len(effective) == 1:
+                # 单一关键词: 需要进一步判断
+                kw = effective[0]
+                
+                # 检查禁忌是否包含提交相关意图词 (中文或英文)
+                forbidden_has_submit = any(
+                    s in forbidden for s in ["提交", "submit", "final_answer", "Final Answer", "提交flag", "提交答案"]
                 )
+                
+                # 检查操作是否包含提交意图
+                has_intent = _has_submit_intent(combined)
+                
+                if forbidden_has_submit and has_intent:
+                    # 禁忌是关于提交的, 操作也有提交意图 → 拦截
+                    return (
+                        f"⚠️ 拦截: 该操作 '{action}' 已被巡查判定为无效 (禁忌列表: "
+                        f"{forbidden[:80]}). 立即停止, 换一个完全不同的方法. "
+                        f"请重新输出 Thought + Action + Action Input."
+                    )
+                
+                # 其他单一关键词场景: 必须完整短语匹配
+                if kw in combined:
+                    return (
+                        f"⚠️ 拦截: 该操作 '{action}' 已被巡查判定为无效 (禁忌列表: "
+                        f"{forbidden[:80]}). 立即停止, 换一个完全不同的方法. "
+                        f"请重新输出 Thought + Action + Action Input."
+                    )
+                # 单一关键词不匹配, 放行
+                continue
+            # 无有效关键词或未命中 — 放行, 不拦截
         return ""
 
     # ── Sprint 36.2: 阶段感知 — 按当前阶段注入不同巡查任务 ──
@@ -1136,12 +1284,29 @@ class Coordinator:
         if must_ignored:
             hard_issues.append(must_ignored)
 
+        # Sprint 37 (ida-reverse-course CH8 复盘): 已解出未提交检测 —
+        # agent 已提取到完整 flag 候选 (thought/observation 中出现 flag{...} 且
+        # 有验证信号), 但仍在反复提取/验证 (strings/objdump/xxd 重复), 未提交.
+        # 规则级强制: 直接下发 MUST 提交指令, 不依赖 L2 LLM 恰好判"已还原".
+        # CH8 根因: aggressive step 11-14 已完全解析 flag, 总指挥却停在 P2 无指令.
+        solved_not_submitted = self._check_solved_not_submitted(recent)
+        if solved_not_submitted:
+            hard_issues.append(solved_not_submitted)
+            self._auto_add_forbidden(recent)
+
         # Sprint 36 复盘: 分析瘫痪 — 长时间无执行类工具 (只读源码/解析数据/静态分析)
         execution_starvation = self._check_execution_starvation(recent, step_no)
         if execution_starvation:
             hard_issues.append(execution_starvation)
 
         if hard_issues:
+            # Sprint 38: MUST 强制跳转 — 检测是否有 [FORCE] 标记
+            # (来自 _check_must_noncompliance 连续 ≥2 步未执行 MUST 时的升级)
+            force_reply_val = ""
+            for issue in hard_issues:
+                if "[FORCE]" in issue:
+                    force_reply_val = "EXECUTE_MUST_IMMEDIATELY"
+                    break
             guidance = self._build_rule_guidance(hard_issues, challenge_type)
             self._last_guidance = guidance
             self._last_guidance_step = step_no
@@ -1157,6 +1322,7 @@ class Coordinator:
                 detected_issues=hard_issues,
                 analysis_summary=f"L1 规则预检发现确定性问题: {'; '.join(hard_issues)}",
                 forbidden_actions=list(self._forbidden_actions),
+                force_reply=force_reply_val,
             )
 
         # ── L1-B: 软线索 (传给 L2, 不直接干预) ──
@@ -1409,16 +1575,120 @@ class Coordinator:
 
         判定: 同一工具使用 ≥(max_repeats+2) 次 (默认 5 次), 但参数不同.
         这是软线索, 传给 L2 LLM 判断是否真的思路固化.
+        
+        增强 (Sprint 40): 检测 ssh_exec 过度使用和工具选择错误.
         """
         tool_counter: dict[str, int] = {}
+        total = 0
         for step in recent:
             action = (step.get("action") or "").strip()
             if action:
                 tool_counter[action] = tool_counter.get(action, 0) + 1
+                total += 1
+        
+        # 通用工具过度使用检测
         for tool, count in tool_counter.items():
             if count >= self.max_repeats + 2:
                 return f"工具过度使用: '{tool}' 使用 {count} 次 (参数不同, 需 LLM 判断是否思路固化)"
+        
+        # Sprint 40: ssh_exec 过度使用检测 (>60% 调用)
+        if total >= 5:
+            ssh_ratio = tool_counter.get("ssh_exec", 0) / total
+            if ssh_ratio > 0.6:
+                return (
+                    f"ssh_exec 过度使用: 最近 {total} 步中 {tool_counter.get('ssh_exec', 0)} 步 ({ssh_ratio:.0%}) 使用 ssh_exec. "
+                    f"ssh_exec 是通用兜底工具, 应优先使用专用工具 (binary_analyze/binary_deep_analyze/angr等). "
+                    f"ssh_exec 仅当其他工具无法覆盖时才使用."
+                )
+        
+        # Sprint 40: vision_analyze 过度使用检测 (连续使用 ≥3 次)
+        if tool_counter.get("vision_analyze", 0) >= 3:
+            return (
+                f"vision_analyze 过度使用: 已使用 {tool_counter['vision_analyze']} 次. "
+                f"vision_analyze 只能分析图片内容, 不能分析二进制数据或代码逻辑. "
+                f"如果是在分析二进制文件/ROM/代码, 请改用 binary_analyze/binary_deep_analyze/objdump 等工具."
+            )
+        
         return ""
+
+    def _check_solved_not_submitted(self, recent: list[dict]) -> str:
+        """Sprint 37 (ida-reverse-course CH8 复盘): 已解出未提交检测 (L1-A 确定性).
+
+        CH8 根因: aggressive 在 step 11-14 已通过 movabs 立即数完整解析出 flag
+        (甚至指出自己曾拼错 junnk), 但系统阶段停在 P2, 巡查判"接近还原"而非
+        "已还原", 从未下发 [MUST] 提交指令 → agent 继续 xxd 验证直到 1200s 超时.
+
+        判定 (需全部满足, 避免误伤):
+        1. 最近 lookback 步的 thought/observation 中出现完整的 flag{...} 候选
+           (regex 提取, 排除说明性引用, 至少 12 字符非平凡内容)
+        2. 该 flag 候选有验证信号 (程序输出 Correct!/工具观测/多片段拼接证据)
+        3. 最近窗口内无提交意图 (无 Final Answer / submit_flag / check_findings)
+        4. agent 仍在反复做提取/验证类工具调用 (strings/objdump/xxd/file/binary)
+        → 返回 MUST 提交指令文本 (含提取出的 flag 供 agent 直接使用)
+        """
+        if not recent:
+            return ""
+        # 局部导入避免潜在循环依赖
+        from ctf_agent.agent.flag_verify import FlagVerifier
+
+        # 1. 提取最近窗口内出现的 flag 候选
+        _re_flag = re.compile(r"flag\{[^{}\s]{6,100}\}")
+        flag_candidates: list[str] = []
+        for step in recent:
+            text = " ".join(filter(None, (
+                step.get("thought"), step.get("observation"), step.get("final_answer"))))
+            if not text:
+                continue
+            for m in _re_flag.finditer(text):
+                cand = m.group(0).strip()
+                if cand not in flag_candidates:
+                    flag_candidates.append(cand)
+        if not flag_candidates:
+            return ""
+        flag = flag_candidates[-1]  # 最新的候选
+
+        # 2. 验证信号: observation 含程序接受 flag 的输出 / flag 明文或其编码出现在观测
+        verified = False
+        obs_text = " ".join((s.get("observation") or "") for s in recent)
+        if any(k in obs_text.lower() for k in (
+                "correct", "right", "验证通过", "验证成功", "congratulations", "win")):
+            verified = True
+        if flag in obs_text or any(v in obs_text for v in FlagVerifier._encode_variants(flag)):
+            verified = True
+        # 3. 提交意图检测: 最近窗口无提交动作
+        recent_actions = [(s.get("action") or "").lower() for s in recent]
+        submit_intent = any(
+            a in ("final_answer", "submit_flag", "check_findings") or "submit" in a
+            for a in recent_actions)
+        if submit_intent:
+            return ""
+
+        # 4. 仍在反复提取/验证: 最近窗口 ≥2 步做提取类工具
+        extract_tools = ("strings", "objdump", "xxd", "file", "binary", "hex", "grep", "head")
+        extract_count = sum(1 for a in recent_actions if any(t in a for t in extract_tools))
+        if extract_count < 2:
+            return ""
+
+        # Sprint 37.1 (CH8 复盘): 分两种情况干预 —
+        # ① verified (程序输出 Correct! / flag 明文或编码出现在观测): 强制直接提交
+        # ② 未 verified (仅 thought 拼出候选, 无程序验证): 引导运行程序验证或直接
+        #    提交候选让系统判定, 不要继续无限反汇编/提取 (CH8 卡死在 movabs 去重
+        #    疑义, 从未运行程序, 1200s 超时根因).
+        if verified:
+            return (
+                f"已解出未提交: 你已提取到完整 flag 候选 `{flag}` 且已通过工具观测"
+                f"验证 (程序输出/字节提取), 但仍在反复做提取验证. 立即停止重复提取, "
+                f"直接提交 flag `{flag}`: 使用 Final Answer 输出该 flag (或 submit_flag/check_findings 提交), "
+                f"不要再调用 strings/objdump/xxd 做无意义的证明."
+            )
+        return (
+            f"flag 候选已拼出但未验证: 你已在分析中拼出完整 flag 候选 `{flag}`, "
+            f"但尚未通过程序运行验证, 仍在反复反汇编/提取确认. "
+            f"立即用 wine/直接运行程序输入该 flag 验证 (观察 Correct!/Wrong!); "
+            f"若程序无法运行, 直接 Final Answer 提交该候选 flag 让系统判定. "
+            f"不要继续无限 objdump/strings 静态分析 — 静态拼接受 movabs 边界字节"
+            f"重叠 (如 junnk) 干扰时, 唯一可靠判定是运行程序或提交试错."
+        )
 
     def _check_execution_starvation(self, recent: list[dict], step_no: int) -> str:
         """Sprint 36: 分析瘫痪检测 — 长时间无执行类工具调用 (L1-A 确定性).
@@ -1431,21 +1701,58 @@ class Coordinator:
 
         判定: 总步数 ≥ execution_starvation_min_steps (默认 20, 前期信息收集合理),
         且最近 8 步内无任何执行类工具 (ssh_exec/ssh_python/docker_exec/http_request 等).
+
+        新增: 低效命令重复检测 (Sprint 40).
+        判定: 最近 5 步内 >= 3 步使用同一工具名, 且 action_input 归一化后存在共同关键词,
+        视为低效重复命令模式, 返回 force_reply 强制切换工具.
         """
-        if step_no < self.execution_starvation_min_steps:
-            return ""
-        window = recent[-8:]
-        if not window:
-            return ""
-        if any((s.get("action") or "") in _EXECUTION_TOOLS for s in window):
-            return ""
-        return (
-            f"分析瘫痪: 最近 {len(window)} 步未调用任何执行类工具 "
-            f"(ssh_exec/ssh_python/docker_exec/docker_python/http_request 等), "
-            f"仅停留在读源码/解析数据/静态分析, 未推进到攻击实施. "
-            f"立即写一个最小攻击脚本并运行验证: 用 ssh_exec 执行关键命令 或 "
-            f"ssh_python 跑一段验证代码, 用真实输出推进 (不要继续纯分析)."
-        )
+        # ── 原有分析瘫痪检测: 长时间无执行类工具 ──
+        if step_no >= self.execution_starvation_min_steps:
+            window = recent[-8:]
+            if window and not any((s.get("action") or "") in _EXECUTION_TOOLS for s in window):
+                return (
+                    f"分析瘫痪: 最近 {len(window)} 步未调用任何执行类工具 "
+                    f"(ssh_exec/ssh_python/docker_exec/docker_python/http_request 等), "
+                    f"仅停留在读源码/解析数据/静态分析, 未推进到攻击实施. "
+                    f"立即写一个最小攻击脚本并运行验证: 用 ssh_exec 执行关键命令 或 "
+                    f"ssh_python 跑一段验证代码, 用真实输出推进 (不要继续纯分析)."
+                )
+
+        # ── 新增: 低效命令重复检测 ──
+        # 最近 5 步内 >= 3 步使用同一工具名, 且 action_input 相似 → 视为低效重复
+        _skip_repeat_tools = {"ssh_exec", "ssh_python", "docker_exec", "docker_python", "http_request", "check_findings"}
+        tool_steps: dict[str, list[dict]] = {}
+        for step in recent[-5:]:
+            action = (step.get("action") or "").strip()
+            if action and action not in _skip_repeat_tools:
+                tool_steps.setdefault(action, []).append(step)
+
+        for tool, steps in tool_steps.items():
+            if len(steps) >= 3:
+                # 归一化 action_input: 去数字/路径/地址, 比较共同关键词
+                norm_inputs: list[str] = []
+                for s in steps:
+                    inp = (s.get("action_input") or "").strip().lower()
+                    inp = re.sub(r"/tmp/[^ \"']+", "P", inp)
+                    inp = re.sub(r"0x[0-9a-f]+", "A", inp)
+                    inp = re.sub(r"\d+", "N", inp)
+                    norm_inputs.append(inp)
+
+                # 提取所有归一化输入中共有的关键词 (长度 > 3)
+                common_tokens = set(norm_inputs[0].split())
+                for ni in norm_inputs[1:]:
+                    common_tokens &= set(ni.split())
+                significant = [t for t in common_tokens if len(t) > 3]
+
+                if significant:
+                    return (
+                        f"force_reply = \"SWITCH_TOOL: 检测到连续重复命令，立即切换到不同的分析方法\"\n"
+                        f"低效命令重复: 工具 [{tool}] 在最近 {len(steps)} 步中使用了 {len(steps)} 次, "
+                        f"且命令参数高度相似 (共同关键词: {', '.join(significant[:5])}). "
+                        f"必须停止重复, 切换到一个完全不同的分析方法."
+                    )
+
+        return ""
 
     def _check_errors(self, recent: list[dict]) -> str:
         """L1-B: 检测连续错误步 (进展停滞线索).
@@ -1496,10 +1803,33 @@ class Coordinator:
         若 agent 持续产生新 observation (在推进), 即使工具未变也视为有效推进,
         交由 L2 LLM 全局判断方向正确性 (#2516 复盘: agent 深挖调用链逐步
         突破 XOR→6-bit 编码逻辑, 但被机械判定为 MUST 未执行, 属误判).
+
+        Sprint 38 强制跳转: 引入 _must_ignore_count 计数器追踪**连续忽略 MUST** 的步数.
+        - 每次检测到 MUST 未执行 → 计数器 +1
+        - 检测未命中 (返回空串) → 计数器归零
+        - 当计数器 ≥2 (连续 2 步未执行) → 升级为 [FORCE] 强制干预:
+          返回值附带 [FORCE] 标记与 force_reply="EXECUTE_MUST_IMMEDIATELY",
+          由 analyze() 的干预逻辑强制 should_intervene=True 并透传 force_reply,
+          确保强制跳转生效 (修改 agent 的下一步 action).
         """
+        def _reset_counter() -> None:
+            """MUST 未执行检测未命中 / 新 MUST 尚未进入忽略期 → 计数器归零."""
+            self._must_ignore_count = 0
+
+        def _escalate(msg: str) -> str:
+            """MUST 未执行 → 计数器 +1; ≥2 步时升级为 [FORCE] 强制跳转."""
+            self._must_ignore_count += 1
+            if self._must_ignore_count >= 2:
+                return (
+                    f"{msg} [FORCE] force_reply=\"EXECUTE_MUST_IMMEDIATELY\""
+                )
+            return msg
+
         if not self._last_guidance or self._last_guidance_step <= 0:
+            _reset_counter()
             return ""
         if self._last_guidance_priority != "MUST":
+            _reset_counter()
             return ""
         # Sprint 35.1 修复: 空 action (格式解析失败/missing fields) 不能视为"工具已改变".
         # 旧逻辑: _dominant_action 对全空 action 返回 "", 与 _last_guidance_action (非空)
@@ -1510,7 +1840,7 @@ class Coordinator:
         if len(empty_actions) >= 2:
             steps_since = self._last_check_step - self._last_guidance_step
             if steps_since >= 1:  # 至少过 1 步就干预, 不等完整间隔
-                return (
+                return _escalate(
                     f"MUST 指令未被执行: step {self._last_guidance_step} 下达 [MUST] 指导后, "
                     f"已过 {steps_since} 步出现 {len(empty_actions)} 次格式解析失败/空输出 "
                     f"(action 为空), 指导完全未执行. "
@@ -1518,15 +1848,18 @@ class Coordinator:
                 )
         current_dominant = self._dominant_action(recent)
         if not self._last_guidance_action or current_dominant != self._last_guidance_action:
-            return ""  # 主导工具已改变, 视为执行了指导
+            _reset_counter()  # 主导工具已改变, 视为执行了指导
+            return ""
         steps_since = self._last_check_step - self._last_guidance_step
         if steps_since < self.check_interval:
-            return ""  # 间隔太短, 可能正在切换中
+            _reset_counter()  # 间隔太短, 可能正在切换中
+            return ""
         # Sprint 32.4c: 主导工具未变但持续有实质进展 → 不判未执行
         if self._has_progress_after_guidance(recent):
+            _reset_counter()
             return ""
         # 主导工具未变且已过一个间隔且无进展 → MUST 未执行
-        return (
+        return _escalate(
             f"MUST 指令未被执行: step {self._last_guidance_step} 下达 [MUST] 指导后, "
             f"已过 {steps_since} 步仍在使用 '{current_dominant}' 且无实质进展. "
             f"上次指导: {self._last_guidance[:120]}"
@@ -1599,16 +1932,20 @@ class Coordinator:
                     )
         if not self._forbidden_actions:
             return ""
-        # 简单关键词匹配: 检查最近 3 步的 action+action_input 是否包含禁忌关键词
+        # 关键词匹配 (过滤高频词, 要求 >=2 个有效关键词): 检查最近 3 步的 action+action_input
         for step in recent[-3:]:
             action = (step.get("action") or "").strip()
             action_input = (step.get("action_input") or "").strip()[:200]
             combined = f"{action} {action_input}".lower()
             for forbidden in self._forbidden_actions:
-                # 提取禁忌描述中的关键词 (如"hashcat"/"john"/"fcrackzip"等)
-                keywords = [w for w in forbidden.lower().split() if len(w) > 3]
-                if keywords and any(kw in combined for kw in keywords):
+                all_kw = [w for w in forbidden.lower().split() if len(w) > 3]
+                effective_kw = [kw for kw in all_kw if kw not in self._HOT_KEYWORDS]
+                if len(effective_kw) >= 2:
+                    if sum(1 for kw in effective_kw if kw in combined) >= 2:
+                        return f"禁忌操作: agent 在尝试已确认无效的操作 '{forbidden[:60]}'"
+                elif len(effective_kw) == 1 and effective_kw[0] in combined:
                     return f"禁忌操作: agent 在尝试已确认无效的操作 '{forbidden[:60]}'"
+                # 全部高频词 → 放行
         return ""
 
     def _check_direction(self, recent: list[dict], challenge_type: str) -> str:
@@ -1965,6 +2302,8 @@ class Coordinator:
             )
 
         except Exception as e:
+            # Sprint 37: LLM 分析失败时触发 provider 恢复探测
+            self._try_recover_provider()
             # LLM 分析失败不影响主流程
             return CoordinatorGuidance(
                 should_intervene=False,
@@ -1972,6 +2311,18 @@ class Coordinator:
                 extend_steps=True,
                 analysis_summary=f"L2 LLM 分析异常: {type(e).__name__}",
             )
+
+    def _try_recover_provider(self) -> None:
+        """Sprint 37: LLM provider 异常时尝试恢复探测."""
+        try:
+            from ctf_agent.llm.routed import RoutedLLMClient
+            if hasattr(self, '_llm_client') and self._llm_client is not None:
+                client = self._llm_client
+                # 若已有 smoke_test 方法, 调用轻量级恢复探测
+                if hasattr(client, 'smoke_test'):
+                    client.smoke_test(timeout=10.0)
+        except Exception:
+            pass
 
     def _query_knowledge(self, task_desc: str, challenge_type: str,
                          trajectory: list[dict] | None = None) -> str:

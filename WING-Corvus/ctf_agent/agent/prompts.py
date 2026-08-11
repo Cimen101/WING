@@ -874,6 +874,53 @@ def _try_inject_skills(task: str, challenge_type: str, difficulty: str, max_char
         return ""
 
 
+# Sprint: 阶段感知工具过滤 — 减少认知过载 (G1/G4)
+# 每个阶段只在前台展示最相关的工具, 但所有工具仍可通过 Action 直接调用
+_PHASE_TOOL_ALLOWLIST: dict[str, set[str]] = {
+    # P1 侦查: 只暴露文件/信息收集类
+    "P1": {
+        "ssh_exec", "ssh_python", "file_type", "binary_analyze", "binary_constants",
+        "binwalk", "strings_like", "auto_decode", "check_findings", "share_finding",
+    },
+    # P2 分析: 增加反汇编/深度分析
+    "P2": {
+        "ssh_exec", "ssh_python", "binary_analyze", "binary_deep_analyze",
+        "binary_constants", "objdump", "angr_symbolic_exec", "check_findings",
+        "share_finding", "auto_decode", "base64_decode",
+    },
+    # P3 利用: 增加求解/执行类
+    "P3": {
+        "ssh_exec", "ssh_python", "angr_symbolic_exec", "z3", "pwntools",
+        "binary_deep_analyze", "web_recon", "http_request", "check_findings",
+        "share_finding", "auto_decode", "base64_decode",
+    },
+    # P4 提交: 聚焦验证/提交
+    "P4": {
+        "ssh_exec", "ssh_python", "check_findings", "share_finding",
+        "base64_decode", "auto_decode",
+    },
+}
+
+
+def _filter_tools_by_phase(tools: list[Tool], phase: str | None) -> list[Tool]:
+    """按阶段过滤工具.**不改变工具可用性**, 仅控制前台展示以降低认知过载.
+
+    所有工具仍保留在 self.tools 中, agent 可通过 Action 直接调用未展示工具.
+    阶段为空或过滤后为空时回退到全量工具 (兼容非分阶段调用).
+    """
+    if not phase or not tools:
+        return tools
+    allow = _PHASE_TOOL_ALLOWLIST.get(phase)
+    if not allow:
+        return tools
+    # 按工具名匹配 (name 可能含后缀, 做子串匹配)
+    filtered = [
+        t for t in tools
+        if any(a in t.name for a in allow)
+    ]
+    return filtered if filtered else tools
+
+
 def build_system_prompt(
     tools: list[Tool],
     *,
@@ -883,6 +930,7 @@ def build_system_prompt(
     difficulty: str = "",
     skill_max_chars: int = 4000,
     inject_skills: bool = False,
+    phase: str | None = None,
 ) -> str:
     """构建完整的 system prompt (Sprint 16 P11-3 重构).
 
@@ -918,7 +966,9 @@ def build_system_prompt(
     # Sprint 36.5: 交互回显型程序通用方法 (防把交互题当逆向硬啃)
     prompt = prompt.replace("{interactive_program_rule}", INTERACTIVE_PROGRAM_RULE)
     prompt = prompt.replace("{skill_injection}", skill_text)
-    prompt = prompt.replace("{tool_schemas}", render_tool_schemas(tools))
+    prompt = prompt.replace("{tool_schemas}", render_tool_schemas(
+        _filter_tools_by_phase(tools, phase)
+    ))
 
     # Kali 兵器谱 (保留 web/pwn/recon 决策流)
     cats = ["web", "pwn", "recon"] if arsenal_categories is None else arsenal_categories

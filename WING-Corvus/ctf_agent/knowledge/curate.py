@@ -259,14 +259,22 @@ def _llm_refine(
         return ""
 
 
-def _update_role_guide(kb: KnowledgeBase, ctype: str, style: str, verdict: str, refined: str) -> bool:
-    """按用户规则更新 role_guides: **只改不增** + 超限压缩.
+def _update_role_guide(kb: KnowledgeBase, ctype: str, style: str,
+                       verdict: str, refined: str, steps: list[dict] | None = None) -> bool:
+    """Sprint 37: 更新解题器执行策略 (agents/{ctype}-{phase}-{style}.md).
 
-    - 只修改对应题型 role_guide 文件 (role_guides/{ctype}.md 或 {ctype}-{style}.md)
-    - 成功 → 在对应阶段段落追加经验; 失败 → 追加"禁忌"要点
-    - 文件不存在不创建 (role_guides 由预置初始化, curator 只维护)
+    - 从轨迹推断当前阶段, 更新对应 agents/{ctype}-{phase}-{style}.md
+    - 成功 → 在对应阶段段落替换经验; 失败 → 替换禁忌要点
+    - 文件不存在不创建 (由预置初始化, curator 只维护)
+    - 使用**替换**而非追加, 确保限字数 ≤3KB
     """
-    name = f"{ctype}-{style}.md" if style else f"{ctype}.md"
+    phase = "P1"
+    if steps:
+        try:
+            phase = _step_phase(steps[-1]) if steps else "P1"
+        except Exception:
+            phase = "P1"
+    name = f"agents/{ctype}-{phase}-{style}.md"
     p = kb.root / "role_guides" / name
     if not p.exists():
         return False
@@ -274,18 +282,58 @@ def _update_role_guide(kb: KnowledgeBase, ctype: str, style: str, verdict: str, 
         text = p.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return False
-    # 追加块 (脱敏已在上游完成)
+    # 统一换行符为 \n: 避免 Windows CRLF 导致 \n\n 正则匹配失败 (Sprint 37 自学习未生效根因)
+    text = text.replace("\r\n", "\n")
+    # 替换块: 在"自学习沉淀"段替换为最新经验
     tag = "经验" if verdict == "success" else "禁忌"
-    block = f"\n\n<!-- curator 追加 ({tag}) -->\n{refined}"
-    new_text = text + block
-    # 只改不增 + 超限压缩: 超过 4KB 时保留各阶段标题与正文头尾
-    if len(new_text) > 4000:
-        new_text = _compress(new_text, max_chars=4000)
+    new_block = refined.strip()
+    # 替换"该题型该阶段特有技巧"段的内容
+    import re as _re
+    section_marker = "## 该题型该阶段特有技巧 (自学习沉淀)"
+    if section_marker in text:
+        # 替换自学习沉淀段的内容
+        # 注意: 必须用 _re.escape 转义 section_marker, 因为括号 () 是 regex 元字符
+        _escaped = _re.escape(section_marker)
+        text = _re.sub(
+            rf"{_escaped}\n\n.*?(?=\n\n## |\Z)",
+            lambda m: f"{section_marker}\n\n- [{tag}] {new_block}",
+            text,
+            flags=_re.DOTALL,
+        )
+    else:
+        # 追加新段 (先保留, 后续超过限字数时压缩)
+        text += f"\n\n{section_marker}\n\n- [{tag}] {new_block}"
+    # 限字数压缩
+    if len(text) > 3000:
+        text = _compress(text, max_chars=3000)
     try:
-        p.write_text(new_text, encoding="utf-8")
+        p.write_text(text, encoding="utf-8")
         return True
     except Exception:
         return False
+
+
+def _update_brainteaser(kb: KnowledgeBase, verdict: str, refined: str) -> bool:
+    """Sprint 37: 脑洞题复盘后更新 brainteaser/general.md 和 detection.md.
+
+    使用替换而非追加, 确保限字数.
+    """
+    changed = False
+    # 更新 general.md
+    gp = kb.root / "role_guides" / "brainteaser" / "general.md"
+    if gp.exists():
+        try:
+            text = gp.read_text(encoding="utf-8", errors="replace")
+            tag = "经验" if verdict == "success" else "教训"
+            entry = f"\n- [{tag}] {refined[:200]}"
+            text += entry
+            if len(text) > 6000:
+                text = _compress(text, max_chars=6000)
+            gp.write_text(text, encoding="utf-8")
+            changed = True
+        except Exception:
+            pass
+    return changed
 
 
 def _update_patterns(kb: KnowledgeBase, ctype: str, verdict: str, refined: str) -> bool:
@@ -443,9 +491,21 @@ def curate_trace(trace_path: Path, kb: KnowledgeBase, log_path: Path, llm: Any =
         record["output"] = {"kind": "playbook" if verdict == "success" else "pitfall",
                             "path": str(target), "changed": changed}
 
-        # 5. role_guides 更新 (只改不增): 成功→经验, 失败→禁忌
-        rg_changed = _update_role_guide(kb, ctype, style, verdict, refined)
+        # 5. agents/ 执行策略更新 (Sprint 37): 成功→经验, 失败→禁忌
+        rg_changed = _update_role_guide(kb, ctype, style, verdict, refined, steps)
         record["role_guide_changed"] = rg_changed
+        # 5b. 脑洞题策略更新 (Sprint 37): 若轨迹含脑洞特征, 更新 brainteaser/general.md
+        bt_changed = False
+        try:
+            desc_text = " ".join(str(s.get("thought", "")) + " " + str(s.get("observation", ""))
+                                 for s in steps)
+            if any(k in desc_text for k in
+                   ["诱饵", "decoy", "not enough", "backdoor", "no matter what",
+                    "参数扫描", "多层编码", "格式不匹配", "misdirection"]):
+                bt_changed = _update_brainteaser(kb, verdict, refined)
+        except Exception:
+            pass
+        record["brainteaser_changed"] = bt_changed
         # 6. patterns 更新 (抽象经验库, 仅成功)
         pt_changed = _update_patterns(kb, ctype, verdict, refined)
         record["patterns_changed"] = pt_changed
@@ -485,7 +545,8 @@ def curate_dir(traces_dir: Path, kb_root: Path | None = None, llm: Any = None) -
     if not traces:
         print(f"no jsonl in {traces_dir}")
         return 0
-    done = skipped = errors = playbook = pitfall = role_guide = patterns = 0
+    done = skipped = errors = playbook = pitfall = 0
+    role_guide = patterns = brainteaser = 0
     for t in traces:
         rec = curate_trace(t, kb, log_path, llm=llm)
         st = rec["status"]
@@ -501,17 +562,21 @@ def curate_dir(traces_dir: Path, kb_root: Path | None = None, llm: Any = None) -
                 role_guide += 1
             if rec.get("patterns_changed"):
                 patterns += 1
+            if rec.get("brainteaser_changed"):
+                brainteaser += 1
             print(f"  [{kind:8s}]{'merged' if changed else 'dup' :6s} {t.name} -> {(rec.get('output') or {}).get('path', '')}"
                   f"{' [role_guide]' if rec.get('role_guide_changed') else ''}"
-                  f"{' [patterns]' if rec.get('patterns_changed') else ''}")
+                  f"{' [patterns]' if rec.get('patterns_changed') else ''}"
+                  f"{' [brainteaser]' if rec.get('brainteaser_changed') else ''}")
         elif st == "error":
             errors += 1
             print(f"  [ERROR] {t.name}: {rec.get('error')} {'[traces 已归档]' if rec.get('traces_archived') else ''}")
         else:
             skipped += 1
             print(f"  [skip ] {t.name}: {st}")
-    print(f"curated: done={done} (playbook={playbook}, pitfall={pitfall}, role_guide={role_guide}, "
-          f"patterns={patterns}) skipped={skipped} errors={errors} log={log_path}")
+    print(f"curated: done={done} (playbook={playbook}, pitfall={pitfall}, "
+          f"role_guide={role_guide}, patterns={patterns}, brainteaser={brainteaser}) "
+          f"skipped={skipped} errors={errors} log={log_path}")
     return errors
 
 

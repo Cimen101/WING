@@ -38,9 +38,53 @@ _TRUNCATED_SUFFIX = "\n... (输出截断,共 {total} 字符)"
 
 # Kali 上执行的 Python 脚本 (用 base64 传参避免转义)
 # Sprint 31: 支持图片/视频/音频全模态
-_VISION_SCRIPT = r'''import base64, json, sys, io, os, subprocess, urllib.request
+# Sprint 36.6: 增加网络诊断和错误恢复
+_VISION_SCRIPT = r'''import base64, json, sys, io, os, subprocess, urllib.request, socket, ssl, time as _time
+
 file_path = base64.b64decode(sys.argv[1]).decode("utf-8")
 question = base64.b64decode(sys.argv[2]).decode("utf-8")
+
+# 网络诊断函数
+def _diagnose_network(url):
+    """诊断容器网络连通性"""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    host = parsed.hostname
+    port = parsed.port or 443
+    
+    # 1. DNS 解析
+    try:
+        ip = socket.gethostbyname(host)
+        print(f"[NET] DNS 解析成功: {host} -> {ip}", file=sys.stderr)
+    except Exception as e:
+        print(f"[NET] DNS 解析失败: {e}", file=sys.stderr)
+        return False
+    
+    # 2. TCP 连接测试
+    try:
+        sock = socket.create_connection((host, port), timeout=5)
+        sock.close()
+        print(f"[NET] TCP 连接成功: {host}:{port}", file=sys.stderr)
+    except Exception as e:
+        print(f"[NET] TCP 连接失败: {e}", file=sys.stderr)
+        return False
+    
+    # 3. HTTPS 请求测试 (轻量请求)
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "CTF-Agent-Network-Check/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"[NET] HTTPS 响应成功: HTTP {resp.status}", file=sys.stderr)
+        return True
+    except urllib.error.HTTPError as e:
+        # HTTP 401/403 等表示服务器可达, 只是认证问题
+        print(f"[NET] HTTPS 服务器可达 (HTTP {e.code})", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"[NET] HTTPS 请求失败: {type(e).__name__}: {e}", file=sys.stderr)
+        return False
 
 # Sprint 31: 按扩展名/魔数判断模态类型
 def detect_modality(fp):
@@ -179,6 +223,16 @@ API_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
 API_KEY = "tp-cgg7b3h86cg0f4h47m5ir6acyptqpvwvxmpphy3sxei3kkx6"
 MODEL = "mimo-v2.5"
 
+# 网络诊断: 检查容器是否能访问 MIMO API
+print("[VISION] 开始网络诊断...", file=sys.stderr)
+net_ok = _diagnose_network(API_URL)
+if not net_ok:
+    print(f"ERROR: 容器无法访问 MIMO API ({API_URL}). 网络诊断失败.", file=sys.stderr)
+    print("可能原因: 容器无外网访问权限或 DNS 解析失败.", file=sys.stderr)
+    print("建议: 检查 Docker 网络配置, 确保容器可以访问外部 HTTPS.", file=sys.stderr)
+    sys.exit(1)
+print("[VISION] 网络诊断通过, 开始 API 调用...", file=sys.stderr)
+
 payload = {
     "model": MODEL,
     "messages": [{"role": "user", "content": [
@@ -187,25 +241,41 @@ payload = {
     ]}],
     "max_tokens": 2000,
 }
-import time as _time
+
 last_err = ""
 for attempt in range(3):
     try:
+        print(f"[VISION] API 调用尝试 {attempt+1}/3...", file=sys.stderr)
         req = urllib.request.Request(
             API_URL,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        # 增加超时时间到 180 秒, 处理大文件上传
+        with urllib.request.urlopen(req, timeout=180) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        content = data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+        content = msg.get("content", "")
+        # Sprint 36.7: 处理 MIMO API 返回 reasoning_content 而非 content 的情况
+        if not content:
+            reasoning = msg.get("reasoning_content", "")
+            if reasoning:
+                content = reasoning
         print(content)
         sys.exit(0)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")[:500]
         last_err = f"HTTP {e.code} - {body}"
+        print(f"[VISION] HTTP 错误: {last_err}", file=sys.stderr)
+    except urllib.error.URLError as e:
+        last_err = f"URLError: {e.reason}"
+        print(f"[VISION] URL 错误: {last_err}", file=sys.stderr)
+    except socket.timeout as e:
+        last_err = f"超时: 请求在 180 秒内未响应"
+        print(f"[VISION] {last_err}", file=sys.stderr)
     except Exception as e:
         last_err = f"{type(e).__name__}: {e}"
+        print(f"[VISION] 未知错误: {last_err}", file=sys.stderr)
     if attempt < 2:
         _time.sleep(3)
 print(f"ERROR: {last_err} (after 3 retries)")
@@ -277,24 +347,43 @@ class VisionAnalyzeTool(Tool):
         fp_b64 = base64.b64encode(file_path.encode("utf-8")).decode("ascii")
         q_b64 = base64.b64encode(question.encode("utf-8")).decode("ascii")
 
-        # 写脚本到 Kali 并执行
+        # 写脚本到 Kali 并执行 (增加超时时间到 600 秒, 处理大文件)
         script_b64 = base64.b64encode(_VISION_SCRIPT.encode("utf-8")).decode("ascii")
         cmd = (
             f"echo '{script_b64}' | base64 -d > /tmp/_vision_analyze.py && "
             f"python3 /tmp/_vision_analyze.py '{fp_b64}' '{q_b64}' 2>&1"
         )
-        r = self.ssh.exec_cmd(cmd, timeout=400)
+        r = self.ssh.exec_cmd(cmd, timeout=600)
         raw = (r.stdout or "").strip()
+        stderr = (r.stderr or "").strip()
+
+        # 合并 stdout 和 stderr 用于诊断
+        combined_output = f"{raw}\n{stderr}".strip()
 
         if not raw:
+            diag_info = ""
+            if stderr:
+                # 提取网络诊断信息
+                net_lines = [l for l in stderr.split('\n') if '[NET]' in l or '[VISION]' in l]
+                err_lines = [l for l in stderr.split('\n') if 'ERROR' in l or '错误' in l]
+                if net_lines:
+                    diag_info = f"\n\n[网络诊断]:\n" + '\n'.join(net_lines[-5:])
+                if err_lines:
+                    diag_info += f"\n\n[错误详情]:\n" + '\n'.join(err_lines[-3:])
             return (
-                f"vision_analyze 无输出. STDERR: {(r.stderr or '')[:300]}\n"
-                f"可能原因: Kali 网络无法访问 MIMO API, 或 PIL/ffmpeg 未安装."
+                f"vision_analyze 无输出.{diag_info}\n"
+                f"可能原因: Kali 网络无法访问 MIMO API, 或 PIL/ffmpeg 未安装.\n"
+                f"建议: 1) 检查 Docker 网络配置\n 2) 手动测试容器网络: ssh 到容器后 curl https://token-plan-cn.xiaomimimo.com"
             )
 
         # 检测错误
         if raw.startswith("ERROR:"):
-            return f"vision_analyze 调用失败:\n{raw}\n\n建议: 检查 Kali 网络是否可访问 token-plan-cn.xiaomimimo.com, 以及 ffmpeg 是否已安装 (视频/音频需要)"
+            diag_info = ""
+            if stderr:
+                net_lines = [l for l in stderr.split('\n') if '[NET]' in l or '[VISION]' in l]
+                if net_lines:
+                    diag_info = f"\n\n[网络诊断]:\n" + '\n'.join(net_lines[-5:])
+            return f"vision_analyze 调用失败:\n{raw}{diag_info}\n\n建议: 检查 Kali 网络是否可访问 token-plan-cn.xiaomimimo.com, 以及 ffmpeg 是否已安装 (视频/音频需要)"
 
         # 成功: 返回模型回答
         result_lines = [

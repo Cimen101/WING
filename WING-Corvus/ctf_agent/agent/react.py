@@ -684,11 +684,13 @@ class ReActEngine:
 
         # 基础 system prompt（用户覆盖 or 基于工具集生成）
         # Sprint 16 P11-3: 透传 task + challenge_type + difficulty 用于 Skill 注入
+        # 阶段感知工具过滤: 初始阶段为 P1, 减少认知过载 (所有工具仍可调用)
         base_system_prompt = self._user_system_prompt or build_system_prompt(
             list(self.tools.values()),
             task=task,
             challenge_type=self._challenge_type or "",
             difficulty=self._challenge_difficulty or "",
+            phase="P1",
         )
 
         # RAG 检索：Sprint 36.2 改为**延迟到侦查阶段后**基于实际观测注入,
@@ -1202,6 +1204,14 @@ class ReActEngine:
 
                 # Sprint 26: 多次提交机制 — 找到答案后通过 callback 提交, 失败则继续循环
                 flag_candidate = parsed.final_answer.strip()
+                # flag 清洗提示: 检测 spurious bytes (如 0x48 REX), 提示 agent 核对原始字节
+                sanity_hint = self._flag_sanity_hint(flag_candidate)
+                if sanity_hint:
+                    self._mem_round(memory, chat_result.content,
+                        f"{sanity_hint}\n\n"
+                        f"你当前提交的 flag 为: {flag_candidate}\n"
+                        f"请在提交前先核对原始字节, 去除可能的垃圾字节后重新整理 flag."
+                    )
                 if self._submission_handler is not None:
                     # 去重检查: 已提交过的答案直接驳回
                     if flag_candidate in self._submitted_flags:
@@ -1294,6 +1304,9 @@ class ReActEngine:
                             except Exception:
                                 pass  # 上报失败不影响主流程
                         remaining = self._max_submissions - self._submission_count
+                        # 检测 AES-GCM 解密场景, 注入密钥派生提示
+                        kd_hint = self._key_derivation_hint(steps)
+                        kd_block = ("\n" + kd_hint) if kd_hint else ""
                         self._mem_round(memory, chat_result.content,
                             f"❌ 答案提交失败: {flag_candidate}\n"
                             f"反馈: {feedback}\n"
@@ -1304,6 +1317,7 @@ class ReActEngine:
                             f"2. 重新检查工具输出, 寻找遗漏\n"
                             f"3. 尝试不同的解题路径\n"
                             f"4. 确保新答案与已驳回的不同"
+                            f"{kd_block}"
                         )
                         step_no += 1
                         continue
@@ -1939,3 +1953,113 @@ class ReActEngine:
                         pass
         except Exception:  # noqa: BLE001 - 总线异常不影响主流程
             pass
+
+    @staticmethod
+    def _key_derivation_hint(steps: list[ReActStep]) -> str:
+        """检测轨迹中是否出现 AES-GCM 解密且 flag 验证失败, 注入密钥派生提示.
+
+        分析最近的工具调用, 判断是否存在:
+        - AES-GCM/AES-GCM 解密相关的工具调用
+        - 使用了 Crypto.Cipher / cryptography 库
+        - 常见密钥派生模式的使用 (SHA256/MD5/HMAC/to_bytes/encode)
+
+        Returns:
+            提示字符串 (空字符串=无需提示)
+        """
+        if not steps:
+            return ""
+
+        aes_gcm_keywords = (
+            "aes-gcm", "aes_gcm", "aesgcm", "AES-GCM",
+            "ChaCha20-Poly1305", "chacha20-poly1305",
+            "Crypto.Cipher", "cryptography.hazmat",
+            "AES\.MODE_GCM", "MODE_GCM",
+            "decrypt.*gcm", "gcm.*decrypt",
+        )
+
+        derivation_patterns = (
+            "sha256", "SHA256", "md5", "MD5", "hmac", "HMAC",
+            "to_bytes", ".encode()", "derive", "key derivation",
+            "PBKDF2", "scrypt", "HKDF",
+        )
+
+        recent = steps[-8:]
+        all_text = " ".join(
+            (s.action or "") + " " + (s.action_input or "") + " " + (s.observation or "")
+            for s in recent
+        )
+
+        has_aes_gcm = any(kw in all_text for kw in aes_gcm_keywords)
+        has_derivation = any(pat in all_text for pat in derivation_patterns)
+
+        if not has_aes_gcm:
+            return ""
+
+        hints: list[str] = [
+            "[密钥派生提示] 检测到你在使用 AES-GCM 解密, 但 flag 提交失败.",
+            "常见密钥派生模式 (请逐一尝试):",
+        ]
+
+        hints.append("  1. key = SHA256(private_key).digest()  — SHA256 哈希私钥")
+        hints.append("  2. key = SHA256(private_key + salt).digest() — SHA256 哈希私钥+salt")
+        hints.append("  3. key = MD5(private_key).digest() — MD5 哈希私钥")
+        hints.append("  4. key = SHA256(shared_secret).digest() — SHA256 哈希共享密钥")
+        hints.append("  5. key = HMAC-SHA256(private_key, salt).digest() — HMAC 派生")
+        hints.append("  6. key = private_key.to_bytes(32, 'big') — 直接字节化")
+        hints.append("  7. key = shared_secret.encode() — 字符串编码")
+        hints.append("  8. key = PBKDF2(private_key, salt, count=100000, dkLen=32) — PBKDF2 拉伸")
+        hints.append("")
+        hints.append("Python 实现示例:")
+        hints.append("  from hashlib import sha256, md5")
+        hints.append("  import hmac")
+        hints.append("  key1 = sha256(private_key_bytes).digest()")
+        hints.append("  key2 = sha256(private_key_bytes + salt_bytes).digest()")
+        hints.append("  key3 = md5(private_key_bytes).digest()")
+        hints.append("  key4 = hmac.new(private_key_bytes, salt_bytes, sha256).digest()")
+        hints.append("")
+
+        if has_derivation:
+            hints.append("注意: 你之前使用的密钥派生方式可能不正确, 请尝试上述替代方案.")
+        else:
+            hints.append("注意: 你可能尚未使用密钥派生, 直接用了原始密钥. 请尝试上述派生方式.")
+
+        return "\n".join(hints)
+
+    # ── flag 清洗 (Sprint: 检测并清洗 spurious bytes) ────────
+    _FLAG_SPURIOUS_PATTERNS = (
+        # 常见垃圾字节: 0x48 (x64 REX 前缀), 0x00 (填充), 0x90 (NOP)
+        # 当这些字节在 flag 核中重复出现时, 很可能是 spurious
+        r"(.)\1{2,}",  # 同一字符连续出现 3+ 次
+    )
+
+    @staticmethod
+    def _flag_sanity_hint(flag: str) -> str:
+        """检测 flag 是否包含可疑的 spurious bytes, 返回清洗提示.
+
+        当 flag 从二进制 strings 提取时, 常混入 0x48 (x64 REX 前缀) 等
+        垃圾字节. 此方法检测可疑模式并提示 agent 核对原始字节.
+        """
+        import re
+        # 提取 flag 核 ({} 内的内容)
+        m = re.search(r'\{([^}]+)\}', flag)
+        if not m:
+            return ""
+        core = m.group(1)
+        # 检查核心中的重复字符
+        # 如果核心包含重复的字母 (如 HHH), 提示检查
+        suspicious = []
+        for c in set(core):
+            if core.count(c) >= 3 and c.isalpha():
+                # 检查这个字符是否分布在 flag 的不同位置 (spurious 特征)
+                positions = [i for i, ch in enumerate(core) if ch == c]
+                gaps = [positions[i+1] - positions[i] for i in range(len(positions)-1)]
+                if gaps and max(gaps) > 3 and min(gaps) > 0:
+                    suspicious.append(c)
+        if suspicious:
+            return (
+                "⚠️ flag 可能含 spurious bytes: "
+                f"字符 '{', '.join(suspicious)}' 在 flag 中重复出现且分布异常. "
+                "请用 `xxd -s <offset> -l <len> <binary>` 查看原始字节, "
+                "或用 `ssh_python` 脚本按偏移读取 flag 字节, 确保没有混入 0x48 (REX) 等垃圾字节."
+            )
+        return ""

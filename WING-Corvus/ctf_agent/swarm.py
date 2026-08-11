@@ -319,6 +319,18 @@ class SwarmCoordinator:
             res.success = ar.success
             res.flag = ar.flag
             res.steps = ar.steps
+            # Sprint 37: 若 steps=0, 从 trajectory 提取步数兜底
+            if res.steps == 0 and ar.trajectory:
+                res.steps = len(ar.trajectory)
+            elif res.steps == 0 and ar.raw_result:
+                # 兼容 raw_result 为 dict 的情况 (含 steps 字段)
+                try:
+                    if isinstance(ar.raw_result, dict) and ar.raw_result.get("steps"):
+                        res.steps = int(ar.raw_result["steps"])
+                    elif isinstance(ar.raw_result, list):
+                        res.steps = len(ar.raw_result)
+                except Exception:
+                    pass
             res.elapsed = ar.elapsed
             res.tokens = ar.tokens
             res.fail_reason = ar.fail_reason

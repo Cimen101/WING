@@ -164,12 +164,17 @@ class Commander:
         self._p1_timeout_secs: int = 90
         # Sprint 36.5.2: 单路先行记录 {style: 先行到的阶段} (P1 完成的路单独下发下一阶段任务)
         self._solo_advanced: dict[str, str] = {}
+        # Sprint 37: 脑洞题标志 (assign_initial 时检测, 用于注入脑洞题策略)
+        self._is_brainteaser: bool = False
 
     # ---------- 领题: 任务分解与分工 ----------
 
     def assign_initial(self, bus: Any = None) -> list[TaskAssignment]:
         """LLM 任务分解 → 按风格分工. 返回任务契约列表 (并记录到状态)."""
         styles_block = "\n".join(f"- {s}" for s in self.styles)
+        # Sprint 37: 脑洞题早期检测 (基于特征匹配)
+        is_brainteaser = self._detect_brainteaser()
+        self._is_brainteaser = is_brainteaser
         # WING KB: 总指挥层注入题型外部包主题 (只作分工参考, 非强制)
         kb_block = ""
         if self.knowledge_base is not None:
@@ -180,6 +185,7 @@ class Commander:
                     role="commander",
                     phase="P1",
                     max_chars=1800,
+                    is_brainteaser=is_brainteaser,  # Sprint 37: 脑洞题注入
                 )
                 kb_block = f"\n## 知识库主题参考 (辅助分工, 按需采用)\n{kb_block}\n" if kb_block else ""
             except Exception:
@@ -1198,6 +1204,47 @@ class Commander:
         except Exception:  # noqa: BLE001 - 方向解析失败不阻断
             pass
         self._trim_context()
+
+    def _detect_brainteaser(self) -> bool:
+        """Sprint 37: 脑洞题早期检测 (基于特征匹配 + 知识库特征库).
+
+        用于 assign_initial 领题时判断是否脑洞题, 决定是否注入脑洞题通用策略.
+        若知识库有 brainteaser/detection.md, 用其强/弱特征做规则匹配;
+        否则用内置启发式关键词.
+        """
+        desc = (self.task_desc or "").lower()
+        # 1. 知识库特征库匹配 (若存在 detection.md)
+        bt_features = ""
+        if self.knowledge_base is not None:
+            try:
+                bt_features = self.knowledge_base._read_role("brainteaser/detection.md")
+            except Exception:
+                bt_features = ""
+        if bt_features:
+            # 强特征 (≥1 命中即怀疑)
+            strong = [
+                "key\"", "引号", "not enough", "different thing",
+                "no matter what", "backdoor", "sneakily", "hidden",
+                "misdirection", "误导", "red herring", "trail",
+            ]
+            strong_hits = sum(1 for k in strong if k in desc)
+            if strong_hits >= 1:
+                return True
+            # 弱特征 (≥3 命中可怀疑)
+            weak = [
+                "?\"", "\"?", "unusual", "weird", "strange", "custom",
+                "new cipher", "new technique", "迷", "线索", "异常",
+            ]
+            weak_hits = sum(1 for k in weak if k in desc)
+            return weak_hits >= 3
+        # 2. 内置启发式
+        hints = [
+            "key\"", "引号", "not enough", "different thing", "no matter what",
+            "backdoor", "sneakily", "hidden", "misdirection", "误导",
+            "red herring", "trail", "weird", "strange", "new cipher",
+        ]
+        hits = sum(1 for h in hints if h in desc)
+        return hits >= 2
 
     def analyze_reports(self, bus: Any = None) -> list[CommanderDirective]:
         """基于已消费的汇报做 LLM 分析, 产出并下发 directive (静默则不下发).

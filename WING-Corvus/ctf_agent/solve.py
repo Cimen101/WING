@@ -392,6 +392,8 @@ def _build_engine(task: dict[str, Any], settings: Any):
                                / _sanitize_name(share_key)),
                 # S13: 同题重做强制全新环境 (task JSON reset_container=true, 默认复用现场)
                 force_reset=bool(task.get("reset_container", False)),
+                # 容器创建时注入的环境变量 (如 FLAG=xxx, 避免 flag 文件泄露)
+                env=task.get("env", None),
             )
         except Exception:
             docker_client = None

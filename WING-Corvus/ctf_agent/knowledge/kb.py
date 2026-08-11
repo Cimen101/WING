@@ -125,29 +125,37 @@ class KnowledgeBase:
         self.root = Path(root) if root else DEFAULT_KB_ROOT
         self._role_cache: dict[str, str] = {}
         self._pattern_cache: dict[str, dict[str, Any]] | None = None
+        self._tool_catalog: dict = {}
+        self._structured: dict = {}   # Sprint 40.5.2: 结构化知识 (JSON)
+        self._load_tool_catalog()
+        self._load_structured()
 
-    # ── role_guides (只改不增) ──────────────────────────────
-    def role_guide(self, challenge_type: str, style: str = "", phase: str = "P1", max_chars: int = 4000) -> str:
-        """按题型+风格+阶段返回指南段落.
+    # ── role_guides (Sprint 37: 角色层分离) ──────────────────
+    def role_guide(self, challenge_type: str, role: str = "tactic",
+                   style: str = "", phase: str = "P1", max_chars: int = 4000) -> str:
+        """按角色/题型/阶段返回指南.
 
-        文件: role_guides/{ctype}.md (基础) + role_guides/{ctype}-{style}.md (风格变体).
-        只取当前阶段段落, 压缩上下文避免分心; 若未分阶段则取开头.
+        Sprint 37 重构:
+        - commander/strategy: role_guides/{ctype}.md (总指挥分工经验, 整段注入)
+        - tactic: role_guides/agents/{ctype}-{phase}-{style}.md (解题器执行策略, 整段注入)
         """
         ctype = (challenge_type or "").lower().strip()
         if not ctype:
             return ""
-        parts: list[str] = []
-        # 1. 基础指南
-        base = self._read_role(f"{ctype}.md")
-        if base:
-            parts.append(_section_by_phase(base, phase))
-        # 2. 风格变体
-        if style:
-            variant = self._read_role(f"{ctype}-{style}.md")
-            if variant:
-                parts.append(_section_by_phase(variant, phase))
-        text = "\n\n".join(p for p in parts if p)
-        return text[:max_chars]
+
+        if role in ("commander", "strategy"):
+            # 总指挥/巡查器: 注入 {type}.md (总指挥分工经验, 不分阶段截取)
+            text = self._read_role(f"{ctype}.md")
+            return text[:max_chars] if text else ""
+
+        # tactic: 注入 agents/{ctype}-{phase}-{style}.md (解题器执行策略)
+        path = f"agents/{ctype}-{phase}-{style}.md"
+        text = self._read_role(path)
+        if not text:
+            # 降级: 没有精准匹配时用 conservative 兜底
+            fallback = f"agents/{ctype}-{phase}-conservative.md"
+            text = self._read_role(fallback)
+        return text[:max_chars] if text else ""
 
     def _read_role(self, name: str) -> str:
         if name in self._role_cache:
@@ -160,6 +168,145 @@ class KnowledgeBase:
         except Exception:
             self._role_cache[name] = ""
         return self._role_cache[name]
+
+    # ── tool_catalog (工具目录) ────────────────────────────
+    def _load_tool_catalog(self) -> None:
+        """加载 tool_catalog/tool_catalog.json (工具目录, 失败时置空)."""
+        catalog_path = Path(self.root) / "tool_catalog" / "tool_catalog.json"
+        if catalog_path.exists():
+            try:
+                self._tool_catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+            except Exception:
+                self._tool_catalog = {}
+
+    def _get_domain_for_type(self, challenge_type: str) -> str:
+        """将 challenge_type 映射到 tool_catalog 中的 domain."""
+        mapping = {
+            "reverse": "reverse",
+            "crypto": "crypto",
+            "web": "web",
+            "pwn": "pwn",
+            "forensics": "forensics",
+            "misc": "misc",
+            "osint": "osint",
+        }
+        return mapping.get((challenge_type or "").lower().strip(), "all")
+
+    def _format_tool_catalog(self, challenge_type: str, task: str, phase: str) -> str:
+        """将工具目录格式化为易读文本 (按 domain 过滤, 标记为【工具目录】段).
+
+        返回 None 等价用途: 无匹配内容时返回 "" (调用方判空).
+        """
+        domain = self._get_domain_for_type(challenge_type)
+        tools = self._tool_catalog.get("tools", {})
+        tool_chains = self._tool_catalog.get("tool_chains", {})
+        mapping = self._tool_catalog.get("scenario_tool_mapping", [])
+
+        lines: list[str] = []
+        # 1. 该 domain 的工具
+        domain_tools = [t for t in tools.values() if t.get("domain") in (domain, "all")]
+        if domain_tools:
+            lines.append("可用工具:")
+            for t in domain_tools:
+                name = t.get("name", "")
+                speed = t.get("speed", "")
+                func = t.get("function", "")
+                usage = t.get("usage", "")
+                lines.append(f"- {name} [{speed}]：{func}")
+                if usage:
+                    lines.append(f"  用法：{usage}")
+        # 2. 该 domain 的工具链
+        domain_chains = [c for c in tool_chains.values() if c.get("domain") == domain]
+        if domain_chains:
+            lines.append("工具链:")
+            for c in domain_chains:
+                desc = c.get("description", "")
+                chain = c.get("chain", [])
+                lines.append(f"- {desc}：{' → '.join(chain) if isinstance(chain, list) else chain}")
+        # 3. 上下文相关的场景映射
+        t = _tokenize(task or "")
+        filtered = []
+        for item in mapping:
+            if not isinstance(item, dict):
+                continue
+            scenario = str(item.get("scenario", ""))
+            if not t or _jaccard(t, _tokenize(scenario)) > 0.05:
+                filtered.append(item)
+        if filtered:
+            lines.append("场景提示:")
+            for item in filtered:
+                lines.append(f"- {item.get('scenario', '')}：{item.get('suggest', '')}")
+
+        if not lines:
+            return ""
+        return "【工具目录】\n" + "\n".join(lines)
+
+    # ── structured (Sprint 40.5.2: 结构化知识库) ─────────────
+    def _load_structured(self) -> None:
+        """加载 structured/ 下的 JSON 结构化知识 (算法指纹/架构指南/环境解法)."""
+        sd = self.root / "structured"
+        if not sd.exists():
+            return
+        for fname in ("algorithm_fingerprints.json", "architecture_guides.json",
+                      "environment_solutions.json"):
+            p = sd / fname
+            if not p.exists():
+                continue
+            try:
+                self._structured[fname] = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                self._structured[fname] = {}
+
+    def structured(self, challenge_type: str = "", task: str = "", max_chars: int = 2500) -> str:
+        """按题型/任务关键词查询结构化知识.
+
+        返回匹配的算法指纹/架构指南/环境解法, 注入 agent 辅助逆向.
+        """
+        if not self._structured:
+            return ""
+        ctype = (challenge_type or "").lower().strip()
+        t = _tokenize(task or "")
+        lines: list[str] = []
+
+        # 1. 架构指南: 按关键词匹配 (gameboy/mame/multiarch/neogeo/x86perm/vm)
+        arch = self._structured.get("architecture_guides.json", {})
+        for gid, guide in (arch.get("guides", {}) or {}).items():
+            name = str(guide.get("name", ""))
+            text = f"[{name}] {guide.get('description', '')}"
+            kw = _tokenize(name + " " + str(guide.get('description', '')))
+            # 命中关键词: 题型reverse + 标题/描述含架构特征词
+            arch_kw = ["gameboy", "mame", "neogeo", "multiarch", "vm", "x86", "置换", "模拟器", "game boy"]
+            if ctype == "reverse" and any(a in (name + " " + str(guide.get("description", ""))).lower() for a in arch_kw):
+                # 提取关键字段
+                usage = guide.get("usage", "") or guide.get("solution_hint", "") or ""
+                inter = guide.get("interaction", "")
+                if usage:
+                    lines.append(f"  · {usage}")
+                if inter:
+                    lines.append(f"  · {inter}")
+
+        # 2. 环境解法: 按任务关键词匹配 (glibcxx/qemu/mame/pyboy)
+        env = self._structured.get("environment_solutions.json", {})
+        for sid, sol in (env.get("solutions", {}) or {}).items():
+            name = str(sol.get("name", ""))
+            if any(k in t for k in ("glibcxx", "libstdc", "运行", "依赖", "环境", "qemu", "mame", "模拟")):
+                for s in sol.get("solutions", [])[:2]:
+                    cmd = s.get("command", "")
+                    if cmd:
+                        lines.append(f"  · [{name}] {cmd}")
+
+        # 3. 算法指纹: 按算法关键词匹配 (aes/rsa/paillier/tea/ecc)
+        fp = self._structured.get("algorithm_fingerprints.json", {})
+        algo_kw = ["aes", "rsa", "paillier", "tea", "ecc", "加密", "算法", "crypto", "公钥", "homomorphic"]
+        if ctype in ("crypto", "reverse") or any(k in t for k in algo_kw):
+            for aid, algo in (fp.get("algorithms", {}) or {}).items():
+                det = algo.get("detection", {})
+                det_text = " ".join(str(v) for v in det.values())
+                lines.append(f"  · [{algo.get('name', aid)}] {det_text[:200]}")
+
+        if not lines:
+            return ""
+        return "【结构化知识参考】\n" + "\n".join(lines)[:max_chars]
 
     # ── playbooks / pitfalls ───────────────────────────────
     def playbooks(self, challenge_type: str, query: str = "", top_k: int = 2, max_chars: int = 3000) -> str:
@@ -262,22 +409,39 @@ class KnowledgeBase:
         style: str = "",
         phase: str = "P1",
         max_chars: int = 6000,
+        is_brainteaser: bool = False,  # Sprint 37: 脑洞题标记
     ) -> str:
         """按角色/题型/阶段组装注入文本.
 
-        role:
-        - tactic  战术层: role_guide(阶段) + playbooks + pitfalls + patterns
-        - strategy 战略层: patterns + package_topics (巡查参考)
-        - commander 总指挥: package_topics + 全题型 playbook 摘要 (分工参考)
+        Sprint 37 重构:
+        - commander 总指挥: {type}.md (总指挥分工经验) + package_topics + patterns
+          + brainteaser/* (若 is_brainteaser)
+        - strategy 战略层: {type}.md + patterns + package_topics
+          + brainteaser/* (若 is_brainteaser)
+        - tactic  战术层: agents/{type}-{phase}-{style}.md + playbooks + pitfalls + patterns
         """
         parts: list[str] = []
         used = 0
         ctype = (challenge_type or "").lower().strip()
 
-        if role in ("tactic", "strategy"):
-            g = self.role_guide(ctype, style, phase, max_chars=max(2000, max_chars // 2))
-            if g:
-                parts.append("【题型分工指南 (当前阶段 {phase})】\n{g}".format(phase=phase, g=g))
+        # 1. 角色指南 (按角色分流)
+        g = self.role_guide(ctype, role=role, style=style, phase=phase,
+                            max_chars=max(2000, max_chars // 2))
+        if g:
+            if role == "tactic":
+                parts.append("【当前阶段执行策略 ({phase}×{style})】\n{g}".format(phase=phase, style=style, g=g))
+            else:
+                parts.append("【题型分工参考】\n{g}".format(g=g))
+
+        # 2. 脑洞题策略覆盖 (仅 commander/strategy, 当 is_brainteaser=True)
+        if role in ("commander", "strategy") and is_brainteaser:
+            bt_detection = self._read_role("brainteaser/detection.md")
+            if bt_detection:
+                parts.append("【脑洞题特征库 (判断用)】\n{bt}".format(bt=bt_detection[:2000]))
+            bt_general = self._read_role("brainteaser/general.md")
+            if bt_general:
+                parts.append("【脑洞题通用策略】\n{bt}".format(bt=bt_general[:3000]))
+
         if role == "tactic":
             pb = self.playbooks(ctype, task, top_k=2)
             if pb:
@@ -295,6 +459,22 @@ class KnowledgeBase:
             pt = self.patterns(ctype, task, top_k=2, max_chars=2000)
             if pt:
                 parts.append("【抽象经验 patterns】\n{pt}".format(pt=pt))
+        # 工具目录注入 (仅 tactic 层)
+        if role == "tactic" and self._tool_catalog:
+            try:
+                catalog_text = self._format_tool_catalog(challenge_type, task, phase)
+                if catalog_text:
+                    parts.append(catalog_text)
+            except Exception:
+                pass
+        # 结构化知识注入 (tactic/strategy 层, 辅助算法/架构/环境识别)
+        if role in ("tactic", "strategy"):
+            try:
+                struct_text = self.structured(challenge_type, task)
+                if struct_text:
+                    parts.append(struct_text)
+            except Exception:
+                pass
         return "\n\n".join(parts)[:max_chars]
 
 

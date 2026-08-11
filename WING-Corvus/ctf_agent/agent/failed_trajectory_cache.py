@@ -337,8 +337,18 @@ class FailedTrajectoryCache:
         self.ttl_seconds = ttl_seconds
         self.max_records = max_records_per_challenge
 
+    def _sanitize_id(self, challenge_id: str) -> str:
+        """净化 challenge_id 中的非法文件名字符 (Windows 保留字符: : * ? \" < > | \\ /)."""
+        safe = challenge_id.replace(":", "_")
+        for ch in '*?"<>|\\/':
+            safe = safe.replace(ch, "_")
+        return safe
+
     def _path_for(self, challenge_id: str) -> Path:
-        return self.cache_dir / f"{challenge_id}.jsonl"
+        return self.cache_dir / f"{self._sanitize_id(challenge_id)}.jsonl"
+
+    def _reflection_file(self, challenge_id: str) -> Path:
+        return self._reflections_path() / f"{self._sanitize_id(challenge_id)}.jsonl"
 
     def _is_expired(self, ts: float) -> bool:
         """Sprint 10 阶段 1.2: 检查记录是否已过期."""
@@ -529,9 +539,6 @@ class FailedTrajectoryCache:
         p = self.cache_dir / "_reflections"
         p.mkdir(parents=True, exist_ok=True)
         return p
-
-    def _reflection_file(self, challenge_id: str) -> Path:
-        return self._reflections_path() / f"{challenge_id}.jsonl"
 
     def _classify_failure_mode(
         self, last: FailedRun, fail_reason: str

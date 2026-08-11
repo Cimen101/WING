@@ -42,6 +42,12 @@ _PROVIDER_FAIL_THRESHOLD = 2       # 连续失败 N 次判定 provider 故障
 _PROVIDER_SKIP_AFTER_FAIL = 120.0  # 故障后跳过时长 (s)
 _PROVIDER_RESET_SECONDS = 60.0     # 长时间未失败则重置计数
 
+# Sprint 37: 分级重试节奏 — 网络波动(5s×3)+限流(30s×5)
+_RETRY_FAST_INTERVAL = 5.0    # 快速重试间隔 (s) — 覆盖网络波动
+_RETRY_FAST_COUNT = 3         # 快速重试次数
+_RETRY_SLOW_INTERVAL = 30.0   # 慢速重试间隔 (s) — 覆盖限流
+_RETRY_SLOW_COUNT = 5         # 慢速重试次数
+
 # Sprint 32.9: wall-clock 总超时 — httpx read timeout 防不了慢速流:
 # 服务器持续缓慢发 chunk (每次间隔 < read timeout), ssl.read 永远不返回.
 # 用 daemon 线程 + join(timeout) 实现应用层总超时, 超时即放弃该请求.
@@ -440,8 +446,80 @@ class RoutedLLMClient:
                 self._record_provider_fail("pro")
                 last_err = e
         if last_err is not None:
+            # Sprint 37: 分级恢复探测 — 快速重试(5s×3) + 慢速重试(30s×5)
+            # 覆盖网络波动(快速重试)和限流(慢速重试)两种场景
+            _all_providers = ["zen", "go", "flash_fallback", "pro"]
+            # 1. 快速重试阶段: 间隔 5s, 最多 3 次
+            for _ in range(_RETRY_FAST_COUNT):
+                time.sleep(_RETRY_FAST_INTERVAL)
+                for name in _all_providers:
+                    if self._provider_healthy(name):
+                        try:
+                            return self._retry_call(name, payload, timeout)
+                        except Exception:
+                            self._record_provider_fail(name)
+                            continue
+            # 2. 慢速重试阶段: 间隔 30s, 最多 5 次
+            for _ in range(_RETRY_SLOW_COUNT):
+                time.sleep(_RETRY_SLOW_INTERVAL)
+                for name in _all_providers:
+                    if self._provider_healthy(name):
+                        try:
+                            return self._retry_call(name, payload, timeout)
+                        except Exception:
+                            self._record_provider_fail(name)
+                            continue
             raise last_err
         raise RuntimeError("所有 LLM provider 均不可用 (zen/fallback/pro)")
+
+    def _retry_call(self, name: str, payload: dict, timeout: float | None) -> ChatResult:
+        """Sprint 37: 按 provider 名称重新发起完整 LLM 调用."""
+        if name == "zen":
+            return self._call_zen(payload, timeout)
+        elif name == "go":
+            return self._call_go(payload, timeout)
+        elif name == "flash_fallback":
+            return self._call_fallback(payload, timeout)
+        elif name == "pro":
+            return self._call_pro(payload, timeout)
+        raise ValueError(f"未知 provider: {name}")
+
+    def _call_zen(self, payload: dict, timeout: float | None) -> ChatResult:
+        """Sprint 37: 单独调用 zen provider (供 _retry_call 复用)."""
+        zen_client = self._get_zen_client(timeout or _ZEN_DEFAULT_TIMEOUT)
+        if zen_client is None:
+            raise RuntimeError("zen 客户端未配置")
+        used_model = self.settings.zen_model
+        zen_payload = {**payload, "model": used_model, "timeout": timeout or _ZEN_DEFAULT_TIMEOUT}
+        resp = _call_with_wallclock(lambda p=zen_payload: zen_client.chat.completions.create(**p))
+        self._zen_consecutive_failures = 0
+        self._record_provider_ok("zen")
+        return _parse_response(resp, used_model)
+
+    def _call_go(self, payload: dict, timeout: float | None) -> ChatResult:
+        """Sprint 37: 单独调用 go provider (供 _retry_call 复用)."""
+        go_client = self._get_go_client(timeout or _GO_DEFAULT_TIMEOUT)
+        if go_client is None:
+            raise RuntimeError("go 客户端未配置")
+        used_model = self.settings.go_model
+        go_payload = {**payload, "model": used_model, "timeout": timeout or _GO_DEFAULT_TIMEOUT}
+        resp = _call_with_wallclock(
+            lambda p=go_payload: go_client.chat.completions.create(**p),
+            timeout=_GO_WALLCLOCK,
+        )
+        self._record_provider_ok("go")
+        return _parse_response(resp, used_model)
+
+    def _call_fallback(self, payload: dict, timeout: float | None) -> ChatResult:
+        """Sprint 37: 单独调用 flash fallback provider (供 _retry_call 复用)."""
+        fallback_client = self._get_fallback_client()
+        if fallback_client is None:
+            raise RuntimeError("fallback 未配置 (FALLBACK_API_KEY 为空)")
+        used_model = self.settings.fallback_model
+        fb_payload = {**payload, "model": used_model, "timeout": timeout or _FALLBACK_DEFAULT_TIMEOUT}
+        resp = _call_with_wallclock(lambda p=fb_payload: fallback_client.chat.completions.create(**p))
+        self._record_provider_ok("flash_fallback")
+        return _parse_response(resp, used_model)
 
     def _call_pro(self, payload: dict[str, Any], timeout: float | None) -> ChatResult:
         """直接调用 pro 模型 (Sprint 19)."""

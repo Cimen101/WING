@@ -16,6 +16,11 @@ writeup.md 获得 flag 并直接提交, 轨迹看起来"有工具调用"但 flag
      输出结构化 JSON: {"pass": bool, "reason": str, "confidence": "high/medium/low"}
 
 验证失败 → 不消耗提交次数, 注入反馈让 agent 继续从靶机/附件真实观测中获取 flag.
+
+Sprint 36.6 修复:
+- 不再将 "README" 单独视为可疑关键词 (本地 README.md 是合法附件)
+- 优先选择非可疑渠道的 flag 来源 (即使 flag 先在 README 中出现, 只要后来通过其他工具验证即可)
+- 只有同时命中外部 host + 可疑关键词才标记为可疑
 """
 from __future__ import annotations
 
@@ -31,12 +36,11 @@ _SUSPICIOUS_HOSTS = (
     "api.github.com",
     "gist.github.com",
     "gitlab.com",
-    "writeup",
-    "solver",
     "exploit-db",
     "ctftime",
 )
 # 可疑内容关键词 (命中说明该步可能在读取外部题解/官方答案文件)
+# 注意: "README" 已移除 — 本地 README.md 是合法附件, 不应被误判
 _SUSPICIOUS_KEYWORDS = (
     "writeup",
     "solution",
@@ -49,7 +53,14 @@ _SUSPICIOUS_KEYWORDS = (
     "官方",
     "题解",
     "答案",
-    "README",
+)
+
+# Sprint 36.9: 诱饵模式签名 — 用于检测音频隐写/多层编码中的诱饵 flag
+# 特征: 格式前缀正确但内容过短, 或格式前缀与预期不符
+_DECOY_SIGNATURES = (
+    ("csaw{", "csawctf{"),   # well-tempered 诱饵: csaw{...} vs csawctf{...}
+    ("flag{", "csawctf{"),   # 同题另一诱饵: flag{...} vs csawctf{...}
+    ("CTF{", "CSAW{"),       # 通用: 前缀不匹配
 )
 
 
@@ -74,35 +85,80 @@ class FlagVerifier:
         self.enable_llm = enable_llm and llm is not None
         self.max_trajectory_steps = max_trajectory_steps
         self.max_chars = max_chars
+        # Sprint 36.7: 跟踪已拒绝的 flag — 防止重复提交相同错误答案
+        self._rejected_flags: dict[str, str] = {}  # flag -> reason
 
     # ---------- 对外接口 ----------
+
+    @staticmethod
+    def _decoy_hint(flag: str) -> str:
+        """检测 flag 是否为诱饵, 返回提示文本 (空=非诱饵)."""
+        for decoy_prefix, expected_prefix in _DECOY_SIGNATURES:
+            if flag.startswith(decoy_prefix) and not flag.startswith(expected_prefix):
+                return (
+                    "\n\n💡 检测到可能为诱饵 flag: "
+                    f"以 '{decoy_prefix}' 开头但预期为 '{expected_prefix}' 格式. "
+                    "音频隐写/多层编码题往往有诱饵, 需要调整检测参数 "
+                    "(阈值/窗口大小/步长/频率) 或尝试不同密码才能提取真实 flag. "
+                    "建议: 使用 audio_stego_sweep 工具自动扫描参数组合."
+                )
+        return ""
 
     def verify(self, flag_candidate: str, steps: list[Any]) -> FlagVerifyResult:
         """验证 flag_candidate 是否可提交. steps: ReActStep 列表."""
         flag = (flag_candidate or "").strip()
         if not flag:
             return FlagVerifyResult(passed=False, reason="flag 为空")
-        # ① 代码机制: flag 必须出现在某步 Observation
-        src = self._find_source(flag, steps)
-        if src is None:
+
+        # ① 代码机制: 搜索 flag 来源 (明文 + hex/字节编码变体, Sprint 37)
+        # Sprint 37 (ida-reverse-course 复盘): reverse 题 flag 常以 hex/字节序列形式
+        # 从二进制提取 (objdump/xxd 输出 `666c61677b...` 或 `[102, 108, ...]`),
+        # 明文 flag 反而从不直接出现在 observation. 因此同时匹配编码变体.
+        all_sources = self._find_all_sources(flag, steps)
+
+        # Sprint 36.7 + Sprint 37 修复: 拒绝记忆改为"软锁" —
+        # 只有"当前轨迹仍无任何观测证据"时才拒绝; 一旦出现新证据 (明文或编码),
+        # 解除拉黑允许重新验证. 避免 reverse 题中"先用 echo 验证被拒 → 之后干净
+        # 提取同 flag 也被永久拦截"的死锁 (CH4 maze 三路全超时根因).
+        if flag in self._rejected_flags and not all_sources:
+            reason = self._rejected_flags[flag]
             return FlagVerifyResult(
+                passed=False,
+                reason=f"该 flag 已在之前的验证中被拒绝: {reason}. 请换一个不同的 flag 或从附件/靶机重新获取."
+            )
+        if all_sources:
+            # 有新证据 → 解除拒绝拉黑, 允许重新验证
+            self._rejected_flags.pop(flag, None)
+
+        if not all_sources:
+            result = FlagVerifyResult(
                 passed=False,
                 reason=("flag 未出现在任何工具观测 (Observation) 中. "
                         "它必须来自靶机响应/附件文件的实际读取, 而非记忆或猜测. "
                         "请继续通过工具 (ssh_exec/ssh_python/http_request/file_read 等) "
                         "从靶机或附件中获取 flag 文本后再提交."),
             )
+            # 记录拒绝原因
+            self._rejected_flags[flag] = result.reason
+            return result
+        # 优先选择非可疑渠道的来源 (如工具输出、解密结果), 避免因 README 首次出现而误拒
+        src = None
+        for s in reversed(all_sources):
+            step_no_s, obs_s, act_s, inp_s = s
+            if not self._is_suspicious(act_s, inp_s, obs_s):
+                src = s
+                break
+        if src is None:
+            src = all_sources[0]
         step_no, observation, action, action_input = src
         res = FlagVerifyResult(source_step=step_no,
                                source_channel=self._classify_channel(action, action_input, observation))
-        # ② 代码机制: 自导自演检测 (SU_RSA 假 flag 复盘修复) —
-        # flag 若出现在该步的**工具输入** (agent 自己写的脚本/命令) 中,
-        # 说明 agent 把猜测/编造的 flag 直接硬编码进脚本再执行,
-        # 输出里出现 flag 只是脚本 echo 了它, 并非从附件/靶机真实提取 → 拒绝.
-        # 真实解法: flag 应只出现在工具**输出** (解密/读取/靶机响应), 输入中不含 flag.
+        # ② 代码机制: 自导自演检测 (Sprint 37: 程序验证豁免)
         core = self._flag_core(flag)
-        if flag in action_input or (core and core in action_input):
-            return FlagVerifyResult(
+        scripted = (flag in action_input or (core and core in action_input)
+                    or any(v in action_input for v in self._encode_variants(flag)))
+        if scripted and not self._is_program_verify(action, action_input, observation):
+            result = FlagVerifyResult(
                 passed=False,
                 source_step=step_no,
                 source_channel=res.source_channel,
@@ -112,7 +168,10 @@ class FlagVerifier:
                     "真实 flag 必须只来自工具输出观测. 请删除该来源, 重新从靶机/附件获取."
                 ),
             )
-        # ③ 代码机制: 可疑渠道拦截
+            # 记录拒绝原因
+            self._rejected_flags[flag] = result.reason
+            return result
+        # ③ 代码机制: 可疑渠道拦截 (仅拦截来源为外部题解的情况)
         hit = self._suspicious_hit(action, action_input, observation)
         if hit:
             res.passed = False
@@ -122,21 +181,29 @@ class FlagVerifier:
                 f"(命中关键词: {hit}). 禁止通过查询 writeup/官方仓库/搜索引擎获取 flag. "
                 "请删除该来源, 仅从靶机或附件本身的观测中获取 flag."
             )
+            # 记录拒绝原因
+            self._rejected_flags[flag] = res.reason
             return res
-        # ③ LLM 审查 (代码机制通过后)
+        # ④ LLM 审查 (代码机制通过后)
         if self.enable_llm and self._llm is not None:
             try:
                 llm_pass, llm_reason = self._llm_verify(flag, steps)
                 res.llm_pass = llm_pass
                 res.llm_reason = llm_reason
-                if not llm_pass:
+                if llm_pass is False:
+                    # Sprint 36.8: 仅 llm_pass=False (明确拒绝) 才 fail-closed;
+                    # llm_pass=None (技术失败) 降级为代码机制, 不拒绝正确 flag.
                     res.passed = False
+                    decoy = self._decoy_hint(flag)
                     res.reason = (
                         f"LLM 轨迹审查未通过: {llm_reason}\n"
                         "请重新分析靶机/附件观测, 通过真实工具输出获取 flag."
+                        + decoy
                     )
+                    # 记录拒绝原因
+                    self._rejected_flags[flag] = res.reason
                     return res
-            except Exception as e:  # noqa: BLE001 - LLM 审查失败不阻断 (降级为代码机制)
+            except Exception as e:
                 res.llm_pass = None
                 res.llm_reason = f"LLM 审查异常, 降级为代码机制: {str(e)[:120]}"
         res.passed = True
@@ -145,35 +212,131 @@ class FlagVerifier:
             f" ({res.source_channel})"
             + (f"; LLM 审查通过: {llm_reason}" if res.llm_pass else "")
         )
+        # 验证通过, 从拒绝列表中移除 (允许后续重试同 flag)
+        self._rejected_flags.pop(flag, None)
         return res
 
     # ---------- 代码机制 ----------
 
-    def _find_source(self, flag: str, steps: list[Any]) -> tuple[int, str, str, str] | None:
-        """在 Observation 中搜索 flag 子串, 返回 (step_no, observation, action, action_input).
+    @staticmethod
+    def _encode_variants(flag: str) -> list[str]:
+        """生成 flag 的常见编码变体, 用于匹配二进制提取形式的观测 (Sprint 37).
 
-        优先匹配完整 flag; 允许 flag 内容过长时匹配其核心片段 (花括号内前 8 字符)
-        以避免观测被截断导致的误判.
+        reverse 题中 agent 常用 objdump/xxd/strings 提取字节, observation 里 flag
+        以 hex 串 (`666c61677b...`)、空格分隔 hex (`66 6c 61 67 7b`)、十进制字节列表
+        (`[102, 108, 97, 103, 123]`) 等形式出现, 明文反而缺失. 这些编码形式
+        与明文等价 (可双向还原), 应作为合法观测来源.
+        """
+        raw = flag.encode("utf-8", errors="ignore")
+        variants = [
+            raw.hex(),                                  # 666c61677b...
+            " ".join(f"{b:02x}" for b in raw),          # 66 6c 61 67 7b...
+            ",".join(str(b) for b in raw),              # 102,108,97,103,123...
+            " ".join(str(b) for b in raw),              # 102 108 97 103 123...
+            str(list(raw)),                             # [102, 108, 97, 103, 123]
+            ",".join(f"0x{b:02x}" for b in raw),        # 0x66,0x6c,0x61...
+        ]
+        # 去重并过滤过短变体 (长度 < 6 的匹配无意义)
+        return [v for v in dict.fromkeys(variants) if len(v) >= 6]
+
+    @staticmethod
+    def _is_program_verify(action: str, action_input: str, observation: str) -> bool:
+        """判断该步是否为"用 flag 运行程序验证"的合法操作 (Sprint 37).
+
+        reverse 题标准流程: agent 拼出候选 flag 后用 `echo 'flag{...}' | wine ./bin`
+        或 `printf 'flag{...}' | ./challenge` 运行程序, 程序输出 Correct!/Right!
+        即为 flag 被程序接受的真实观测. 此时 flag 出现在 action_input 是**验证输入**,
+        不是"把猜测的 flag 硬编码进脚本自导自演". 判定条件:
+        1. action 是运行类工具 (ssh_exec/ssh_python 等) 或输入含运行命令特征
+        2. observation 含程序成功接受 flag 的标志 (Correct!/Right!/验证通过/成功等)
+        """
+        act_inp = f"{action} {action_input}".lower()
+        # 输入侧: 含运行程序的命令特征
+        run_hint = any(k in act_inp for k in (
+            "wine", "./", ".exe", "timeout", "|", "printf", "echo ", "python", "input"
+        ))
+        # 输出侧: 程序明确接受/验证通过
+        obs_lower = (observation or "").lower()
+        accept_hint = any(k in obs_lower for k in (
+            "correct", "right", "验证通过", "验证成功", "成功", "恭喜",
+            "accepted", "success", "win", "passed", "congratulations", "✓"
+        ))
+        return run_hint and accept_hint
+
+    def _find_all_sources(self, flag: str, steps: list[Any]) -> list[tuple[int, str, str, str]]:
+        """搜索所有出现 flag 的观测, 返回 [(step_no, observation, action, action_input), ...].
+
+        匹配优先级 (Sprint 37 扩展, ida-reverse-course CH8 复盘):
+        1. 完整 flag 明文
+        2. flag 的 hex/字节编码变体 (objdump/xxd 提取场景)
+        3. core 前 8 字符 (截断观测场景)
+        4. **core 分段覆盖** (拼接式 flag): flag 被垃圾代码/多函数拆分成多个片段,
+           每个片段出现在不同观测中 (如 `flag{jun` + `nk_c0d3` + `_h1d3s_i`...),
+           完整明文从不单步出现. 若 core 的全部片段可被观测集合覆盖 → 视为
+           合法拼接来源 (与手工从附件提取等价), 由 LLM 审查最终把关.
         """
         core = self._flag_core(flag)
+        variants = self._encode_variants(flag)
+        sources: list[tuple[int, str, str, str]] = []
+        seen_steps: set[int] = set()
+
         for s in steps:
             if s.is_final:
                 continue
             obs = (s.observation or "")
             if not obs:
                 continue
-            if flag in obs:
-                return s.step_no, obs, (s.action or ""), (s.action_input or "")
+            if flag in obs or any(v in obs for v in variants):
+                sources.append((s.step_no, obs, (s.action or ""), (s.action_input or "")))
+                seen_steps.add(s.step_no)
+
         if core and len(core) >= 8:
             for s in steps:
                 if s.is_final:
+                    continue
+                if s.step_no in seen_steps:
                     continue
                 obs = (s.observation or "")
                 if not obs:
                     continue
                 if core in obs:
-                    return s.step_no, obs, (s.action or ""), (s.action_input or "")
-        return None
+                    sources.append((s.step_no, obs, (s.action or ""), (s.action_input or "")))
+                    seen_steps.add(s.step_no)
+
+        # ④ core 分段覆盖 (拼接式 flag, CH8 场景)
+        if not sources and core and len(core) >= 12:
+            fragments = self._split_core(core)
+            if fragments:
+                frag_steps: list[tuple[int, str, str, str]] = []
+                for frag in fragments:
+                    if not frag:
+                        continue
+                    hit = next((s for s in steps
+                                if not s.is_final and (s.observation or "")
+                                and frag in s.observation), None)
+                    if hit is None:
+                        frag_steps = []
+                        break
+                    if not any(fs[0] == hit.step_no for fs in frag_steps):
+                        frag_steps.append((hit.step_no, hit.observation or "",
+                                           (hit.action or ""), (hit.action_input or "")))
+                # 全部片段命中且来自 ≥2 个不同步骤 → 拼接来源成立
+                if len(frag_steps) >= 2:
+                    sources = frag_steps
+
+        return sources
+
+    @staticmethod
+    def _split_core(core: str, frag_len: int = 10) -> list[str]:
+        """把 flag core 拆成覆盖全部字符的连续片段 (供分段覆盖匹配).
+
+        策略: 固定长度滑窗 + 剩余补齐, 保证相邻片段有重叠, 覆盖 core 全部字符.
+        """
+        if not core:
+            return []
+        frags = [core[i:i + frag_len] for i in range(0, len(core), frag_len - 4)]
+        # 过滤空串与过短尾巴 (长度 < 4 的片段无区分度)
+        return [f for f in frags if len(f) >= 4]
 
     @staticmethod
     def _flag_core(flag: str) -> str:
@@ -190,18 +353,49 @@ class FlagVerifier:
             return "attachment"
         return "target"
 
+    def _is_suspicious(self, action: str, action_input: str, observation: str) -> bool:
+        """判断某步是否来自可疑外部题解渠道 (Sprint 36.6 修复版).
+
+        区分本地文件 (README.md) vs 外部题解 (GitHub writeup):
+        - 本地 README/challenge 文件是合法的题目附件, 不应标记为可疑
+        - 外部 writeup/solution 才是可疑
+        """
+        text = f"{action} {action_input} {observation[:400]}".lower()
+        # 外部 host + 可疑关键词 = 明确可疑
+        external_hosts = ("github.com", "raw.githubusercontent.com",
+                          "api.github.com", "gist.github.com", "gitlab.com",
+                          "ctftime.org", "exploit-db.com")
+        if any(h in text for h in external_hosts):
+            if any(k in text for k in ("writeup", "solution", "solver", "exploit",
+                                        "官方", "题解", "答案", "flags.txt", "flag.txt")):
+                return True
+        return False
+
     def _suspicious_hit(self, action: str, action_input: str, observation: str) -> str:
-        """检测该步是否命中可疑外部题解渠道. 返回命中的关键词 (空=未命中)."""
+        """检测该步是否命中可疑外部题解渠道. 返回命中的关键词 (空=未命中).
+
+        Sprint 36.6 修复: 更精准的判断 — 只有同时命中外部 host + 可疑关键词才拦截.
+        本地 README.md / challenge 文件不再被误判.
+        """
         text = f"{action} {action_input} {observation[:800]}"
         lower = text.lower()
-        host_hit = next((h for h in _SUSPICIOUS_HOSTS if h in lower), "")
+
+        # 外部 host + 可疑关键词 = 明确可疑
+        external_hosts = ("github.com", "raw.githubusercontent.com",
+                          "api.github.com", "gist.github.com", "gitlab.com",
+                          "ctftime.org", "exploit-db.com")
+        host_hit = next((h for h in external_hosts if h in lower), "")
         kw_hit = next((k for k in _SUSPICIOUS_KEYWORDS if k.lower() in lower), "")
+
         if host_hit and kw_hit:
             return f"{host_hit}+{kw_hit}"
-        # 仅访问 GitHub 且带 readme/flags/题目路径也可疑
-        if host_hit in ("github.com", "raw.githubusercontent.com", "api.github.com", "gist.github.com"):
-            if any(k in lower for k in ("contents", "raw/", "blob/", "/flags", "/flag", "writeup")):
-                return f"{host_hit}+{kw_hit or 'contents/raw'}"
+
+        # 外部 host + 访问特定路径 (如 /flags, /writeup) = 可疑
+        if host_hit:
+            if any(k in lower for k in ("contents", "raw/", "blob",
+                                         "/flags", "/flag", "writeup", "solution", "solver")):
+                return f"{host_hit}+contents/raw"
+
         return ""
 
     # ---------- LLM 审查 ----------
@@ -217,8 +411,6 @@ class FlagVerifier:
    - 前提: 脚本**输入**是附件/靶机数据 (密文/密钥/参数/密文文件), **不含 flag 文本**;
    - flag 只出现在计算**输出**中 (明文/解密结果).
    这是合法的计算产物 (与手工从附件提取 flag 等价), 不是编造, 应判定 PASS.
-   Sprint 36.5.2 修复 (gh_hard_triplet 实测): 此前把 common_d_attack 等内置工具的
-   解密输出误判为"非附件观测"导致误拒, agent 被迫重复计算浪费步数.
 
 ## 判定为 False 的情况 (任一即拒绝):
 1. flag 出现在"读取 GitHub/搜索引擎/官方题解"类操作的输出中 (如 curl github.com、
@@ -242,8 +434,19 @@ class FlagVerifier:
 {trajectory}
 """
 
-    def _llm_verify(self, flag: str, steps: list[Any]) -> tuple[bool, str]:
-        """LLM 审查轨迹, 返回 (pass, reason)."""
+    def _llm_verify(self, flag: str, steps: list[Any]) -> tuple[bool | None, str]:
+        """LLM 审查轨迹, 返回 (pass, reason).
+
+        pass=True: LLM 明确通过
+        pass=False: LLM 明确拒绝 (幻觉/外部题解)
+        pass=None: 技术失败 (LLM 响应无法解析), 降级为代码机制
+
+        Sprint 36.8 修复: 复用 react.py 的鲁棒 JSON 解析 (配平 + markdown 清洗),
+        避免 LLM 审查输出含粗体/前后缀文本/尾逗号时 json.loads 失败导致
+        fail-closed 误拒"正确 flag" (csaw_capture-the-bee 实证: 正确解密 flag
+        因"Expecting property name enclosed in double quotes"被反复拒绝).
+        Sprint 36.9 修复: 技术失败返回 None 而非 False, 区分"明确拒绝"与"无法判断".
+        """
         recent = steps[-self.max_trajectory_steps:]
         lines = []
         for s in recent:
@@ -256,6 +459,7 @@ class FlagVerifier:
         trajectory = "\n".join(lines)[: self.max_chars]
         prompt = self._LLM_PROMPT.format(flag=flag, n=len(recent), trajectory=trajectory)
         try:
+            from ctf_agent.agent.react import _extract_balanced_json, _strip_code_fence
             from ctf_agent.llm import Message
             resp = self._llm.chat(
                 messages=[Message(role="system", content="你只输出 JSON.").to_dict(),
@@ -264,15 +468,22 @@ class FlagVerifier:
                 max_tokens=300,
             )
             content = getattr(resp, "content", "") or ""
-            m = re.search(r"\{.*\}", content, re.DOTALL)
-            if not m:
-                # SU_RSA 假 flag 复盘修复: LLM 审查输出无法解析时保守拒绝 (fail-closed),
-                # 避免"审查不可用 → 放行"导致的幻觉 flag 假阳性.
-                return False, "LLM 审查输出无法解析, 保守拒绝 (fail-closed)"
-            data = json.loads(m.group(0))
+            # 鲁棒提取: 先去 markdown 装饰, 再配平花括号
+            cleaned = _strip_code_fence(content)
+            jstr = _extract_balanced_json(cleaned) or cleaned
+            if not jstr.strip():
+                return None, "LLM 审查响应为空, 降级为代码机制"
+            # 尾逗号容错
+            try:
+                data = json.loads(jstr)
+            except Exception:
+                try:
+                    data = json.loads(re.sub(r",\s*([}\]])", r"\1", jstr))
+                except Exception:
+                    return None, f"LLM 审查响应 JSON 解析失败, 降级为代码机制: {jstr[:80]}"
             return bool(data.get("pass")), str(data.get("reason") or "")
-        except Exception as e:  # noqa: BLE001
-            return False, f"LLM 审查异常, 保守拒绝 (fail-closed): {str(e)[:100]}"
+        except Exception as e:
+            return None, f"LLM 审查异常, 降级为代码机制: {str(e)[:100]}"
 
 
 __all__ = ["FlagVerifier", "FlagVerifyResult"]

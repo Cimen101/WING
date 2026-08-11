@@ -385,7 +385,7 @@ def _compress(text: str, max_chars: int = 2500) -> str:
 
 
 def _merge_into_dir(body: str, ctype: str, kind: str, trace_name: str, kb: KnowledgeBase) -> tuple[Path, bool]:
-    """按用户规则把提炼内容并入知识库对应目录: 增添前查重, 相似则在原文件上完善.
+    """按配置规则把提炼内容并入知识库对应目录: 增添前查重, 相似则在原文件上完善.
 
     Args:
         body: 提炼后的 playbook/pitfall 文本 (已脱敏/压缩)

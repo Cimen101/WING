@@ -42,7 +42,7 @@ _RE_REDACTED = re.compile(r'FLAG_REDACTED\.+', re.IGNORECASE)
 def _sanitize_text(text: str) -> str:
     """脱敏 — 将绝对路径、具体地址、flag 内容替换为通用占位符.
 
-    用户要求: skill 是"解题智慧"不是"执行日志".
+    设计约定: skill 是"解题智慧"不是"执行日志".
     - /tmp/nss_arena/1234/file.zip → {work_dir}/file.zip
     - 0x14001f008 → {address}
     - 0000000000001252 <func> → {func_addr} <func>

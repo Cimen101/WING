@@ -1456,7 +1456,7 @@ FileBus 每条消息（JSONL 一行，`data/bus/{safe_challenge_id}.jsonl`）：
 
 ```powershell
 # 1. 克隆代码后进入 WING-Goose 目录
-cd _publish/wing/WING-Goose
+cd WING-Goose
 
 # 2. 创建虚拟环境并安装依赖
 python -m venv .venv
@@ -1993,7 +1993,7 @@ DOCKER_CPU_PROFILE=heavy
 
 **维护约定**：
 
-- 本文档与 `_publish/wing/WING-Goose/` 源码一一对应；修改源码后应同步更新对应章节；
+- 本文档与 `WING-Goose/` 源码一一对应；修改源码后应同步更新对应章节；
 - 新增模块需在 2.4 目录结构、5.1 新增文件总览、9.4 API 速查三处登记；
 - 配置字段变更需同步 4.5 配置表与 8.2 .env 说明；
 - 复盘驱动的行为变更（如新的 MUST 机制）应登记到 3.13 ADR 记录；
@@ -2003,7 +2003,7 @@ DOCKER_CPU_PROFILE=heavy
 
 ---
 
-> 本文档基于 WING-Goose 生产代码快照（2026-08-04）审计生成，所有描述与 `_publish/wing/WING-Goose/` 目录下源码一致。本文档不包含 WING-Corvus 的总指挥/flag 校验/多阶段协调设计。
+> 本文档基于 WING-Goose 生产代码快照（2026-08-04）审计生成，所有描述与 `WING-Goose/` 目录下源码一致。本文档不包含 WING-Corvus 的总指挥/flag 校验/多阶段协调设计。
 
 
 

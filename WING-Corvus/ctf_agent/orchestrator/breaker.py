@@ -127,7 +127,7 @@ class CircuitBreaker:
         # 却在 1200s 被熔断误杀, 且 executor 传入的 1500s 被 medium 强制压到 1200s.
         # 修复: 超过 max_seconds 后, 若最近 progress_grace_seconds 秒内仍有实质进展
         # (产生新的非空 observation), 则自动延长.
-        # Sprint 32.4b (用户要求): 尽量不做严格硬截断 — 优先 LLM 软截断
+        # Sprint 32.4b (设计约定): 尽量不做严格硬截断 — 优先 LLM 软截断
         # (协调器 [MUST] 指导 + extend_steps 加步). hard_max_seconds 放宽到
         # max_seconds*3 (单轮 75 分钟) 仅作防失控保险, 真正的硬兜底由
         # executor 侧 no_progress 检测 (5-10 分钟无输出) 承担.

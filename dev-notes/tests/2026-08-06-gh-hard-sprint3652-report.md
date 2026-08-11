@@ -37,7 +37,7 @@
 - 根因: `_LLM_PROMPT` 判定 False 的第 4 条把"agent 脚本输出"泛化, 且 PASS 情况未涵盖
   "对附件数据真实计算的解密/攻击产物" — 与 #2950 的 3DES 解密误拒同源 (Sprint 36.5 遗留待办).
 - 影响: agent 被迫用 ssh_python 独立重算 (浪费 2-3 步), 可能误伤真实解出.
-- 修复: [flag_verify.py](file:///c:/Users/RAINBOW/Documents/trae_projects/ctf-agent/ctf_agent/agent/flag_verify.py) `_LLM_PROMPT`:
+- 修复: `ctf_agent/agent/flag_verify.py` `_LLM_PROMPT`:
   - PASS 增加第 2 条: **对附件/靶机数据执行真实计算得到的明文 (解密/逆向/爆破/攻击输出)
     属合法计算产物**, 前提是脚本输入不含 flag 文本 (自导自演检测由代码机制负责).
   - False 第 4 条收窄: 仅当脚本**硬编码 flag 文本** (输入含 flag) 才算自导自演;
@@ -46,7 +46,7 @@
 
 ### 问题 2 (观察, 符合设计): P1 阶段 agent 直接用解题工具解出
 - conservative/aggressive 在 P1 侦查阶段 (step 2) 就调用 common_d_attack 解出 flag.
-- 符合"谁解出谁提交" (用户确认); aggressive 的 P1 任务本就是"快速尝试连分数探测".
+- 符合"谁解出谁提交"设计; aggressive 的 P1 任务本就是"快速尝试连分数探测".
 - flag 验证器兜底防幻觉: 第一次提交被拒后 agent 真实重算通过, 无幻觉 flag 放行.
 
 ### 问题 3 (观察): 题目过快导致 P2-P4 未走完

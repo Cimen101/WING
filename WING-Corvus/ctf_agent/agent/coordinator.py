@@ -440,7 +440,7 @@ _STYLE_COORDINATOR_SECTIONS = {
 # ── 风格参数表 (第 8.1/8.2 节) ────────────────────────────────
 
 STYLE_PARAMS = {
-    # 所有风格统一 5 步一巡查 (用户要求: 干预必须准确果断、及时干预)
+    # 所有风格统一 5 步一巡查 (设计约定: 干预必须准确果断、及时干预)
     # conservative: 稳健节奏, 干预门槛高
     "conservative": {"max_errors": 3, "check_interval": 5, "temperature": 0.0},
     # neutral: 均衡节奏

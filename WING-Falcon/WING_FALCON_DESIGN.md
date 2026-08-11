@@ -3,7 +3,7 @@
 > **文档性质**：系统设计文档 + 使用指南（基于实际源码审计编写，不包含未实现的功能描述）
 > **版本**：WING-Falcon（猎隼）——精英单兵基线（最新快照）
 > **发布日期**：2026-08-02
-> **代码位置**：`_publish/wing/WING-Falcon/`（含 `ctf_agent/` 源码、`main.py`、`pyproject.toml`、`.env.example`）
+> **代码位置**：`WING-Falcon/`（含 `ctf_agent/` 源码、`main.py`、`pyproject.toml`、`.env.example`）
 > **配套文档**：`docs/CTF_AGENT_DESIGN.md`（设计文档）、`docs/CTF_AGENT_GUIDE.md`（使用指南）
 
 ---
@@ -1522,7 +1522,7 @@ python --version   # 应输出 Python 3.10.x 或更高
 进入 WING-Falcon 发布目录，安装核心依赖与开发依赖：
 
 ```bash
-cd _publish/wing/WING-Falcon
+cd WING-Falcon
 pip install -e .[dev]
 ```
 
@@ -1950,7 +1950,7 @@ python minimal_caller.py
 
 - `docs/CTF_AGENT_DESIGN.md`：WING-Falcon 早期设计文档；
 - `docs/CTF_AGENT_GUIDE.md`：完整使用指南（含 NSS Runner 集成示例）；
-- `_publish/wing/WING-Falcon/.env.example`：环境变量模板；
+- `WING-Falcon/.env.example`：环境变量模板；
 - DeepSeek thinking mode 官方文档：`https://api-docs.deepseek.com/zh-cn/guides/thinking_mode`。
 
 ### 15.5 核心模块文件索引
@@ -2005,7 +2005,7 @@ python minimal_caller.py
 
 ---
 
-*本文档基于 `_publish/wing/WING-Falcon/ctf_agent/` 实际源码审计编写；凡文中描述与源码不一致之处，以源码为准。*
+*本文档基于 `WING-Falcon/ctf_agent/` 实际源码审计编写；凡文中描述与源码不一致之处，以源码为准。*
 
 
 

@@ -88,6 +88,22 @@ WING/
 | 单 agent 快速模式 | `python main.py run --target URL --desc "题面"` | 单题快速验证、调试（不启用 swarm/总指挥） |
 | swarm / 总指挥完整模式 | `.env` 开 `SWARM_ENABLED` / `SWARM_COMMANDER_ENABLED` + 调用 `SwarmCoordinator`（见 DESIGN 20.8） | 同题多风格并行 / 三层协作小队 |
 
+## Agent 专用镜像
+
+WING 系列的执行层默认运行在专用的 Linux 容器中（内置 CTF 工具链：密码学 / 逆向 / Pwn / 取证 / 隐写 / 网络工具 + Python 库，含 `/opt/ctf` 预封装命令入口）。镜像已随本仓库发布到 GitHub Container Registry（与本仓库绑定）：
+
+```bash
+# 1. 拉取最新版（v6.2，与当前 WING-Corvus 版本对应）
+docker pull ghcr.io/cimen101/wing/wing-goose:v6.2
+# 或始终跟随最新：docker pull ghcr.io/cimen101/wing/wing-goose:latest
+
+# 2. 在对应版本目录的 .env 中指定该镜像
+DOCKER_ENABLED=true
+DOCKER_IMAGE=ghcr.io/cimen101/wing/wing-goose:v6.2
+```
+
+镜像为纯运行环境（不含源码），配合本仓库三个版本（WING-Falcon / WING-Goose / WING-Corvus）均可直接使用。也可基于 `WING-Corvus` 源码自行构建（`Dockerfile` 与构建说明见 DESIGN 文档执行层章节）。
+
 ### 单 agent 快速模式
 
 ```bash
@@ -123,7 +139,7 @@ KALI_ENABLED=false
 # 3. 运行：每路一个 solve.py 子进程由 SwarmCoordinator 统一编排
 ```
 
-> 每个版本的 `data/` 已内置**空白数据库骨架**（chroma 空库 + skills 空 index.json），其中 WING-Corvus 另内置**知识库**（`data/knowledge/packages/`，按题型分类的外部知识包），下载即可运行；解题过程中自动积累的技能与经验存入本地 `data/`，不进 git。
+> 每个版本的 `data/` 已内置**空白数据库骨架**（chroma 空库 + skills 空 index.json），其中 WING-Corvus 另内置**知识库**（`data/knowledge/`：`packages/` 按题型分类的外部知识包 + `role_guides/` 题型分工指南与解题器执行策略的初始白板版 + `brainteaser/` 脑洞题通用策略），下载即可运行；解题过程中自动积累的技能与经验存入本地 `data/`，不进 git。
 
 ## 设计文档
 

@@ -4,7 +4,7 @@
 > **版本**：WING-Corvus（协作小队 Coordinated Squad）
 > **最后更新**：2026-08-05
 > **上游版本**：WING-Goose（雁阵，含 swarm 三风格并行 / 总线 / 复盘 / docker 链）
-> **代码位置**：`_publish/wing/WING-Corvus/`（含 `ctf_agent/` 源码、`main.py`、`pyproject.toml`、`.env.example`）
+> **代码位置**：`WING-Corvus/`（含 `ctf_agent/` 源码、`main.py`、`pyproject.toml`、`.env.example`）
 > **编写方式**：本文档基于对 WING-Corvus 源码的实际逐行审计撰写，所有描述与实现一致，未编造任何代码中不存在的功能。
 
 ---
@@ -336,13 +336,13 @@ reports, new_cursor = b.check_reports(self.bus_key, cursor=self._report_cursor)
 
 阶段切换判定**基于规则（客观事实）而非 LLM 死板判断**；LLM 只负责任务描述生成。`_set_phase` 记录切换日志（含耗时），`run_once` 中切换后广播阶段提示（`_make_phase_directives` 按阶段为每路生成差异化 SHOULD 指令）。
 
-**Sprint 36.5（2026-08-06，用户要求"不能跳 P4，关键是状态切换机的实时切换"）**：
+**Sprint 36.5（2026-08-06，阶段状态机实时切换强化）**：
 - **单级推进**：`_phase_advance_rule` 每轮最多切换一级（P1→P2 / P2→P3 / P3→P4），不再 while 连跳——确保每级切换都经过对应确凿环节，从根源杜绝"跳 P4"。
 - **实时切换**：战术层（ReAct）解出 flag 时**提交前实时上报** `report_type=flag`（经 `_coordinator.report_flag_solved`），提交失败时实时上报 `report_type=submit_fail`——阶段信号不再依赖战略层巡查 LLM "恰好"输出 `p2_verified`，解决"agent 已解出但总指挥阶段停在 P2"的断裂（nss_2950 复盘根因）。
 - **失败 flag 防死循环**：`_failed_flags` 集合记录提交失败的 flag，P4→P3 回退后同一 flag 不再触发 P3→P4。
 - **总指挥可见性**：`_commander_loop` 轮询间隔 5s→1.5s；每 15s 输出状态心跳（`cmdr.heartbeat()`：阶段/汇报跟踪/指令数/失败 flag 数）；异常不再静默吞掉（记录 ERROR 日志）。
 
-**Sprint 36.5.2（2026-08-06，用户规范——严格落实 docs/阶段式协调.md，仅 P1 任务驱动）**：
+**Sprint 36.5.2（2026-08-06，严格落实 docs/阶段式协调.md，仅 P1 任务驱动）**：
 - **任务禁忌**：directive 协议新增 `forbidden` 字段；总指挥按阶段生成禁忌模板 `_phase_forbidden(phase)`（P1 禁深入利用/禁提交 flag、P2 禁猜提交/禁弃主方向、P3 禁回侦查、P4 仅验证），随领题分工/阶段广播/重定向下发；战略层 `_apply_task_forbidden` 合并进本地禁忌（新任务覆盖旧任务禁忌，本地死路禁忌保留）。
 - **任务完成闭环**：战略层完成任务后上报并置"等待新任务"状态（`_task_done`），战术层每 3 步注入等待提示（抑制空转重复上报/自行发散）；收到新 directive 自动重置。
 - **P1 单路先行**（仅 P1 有效）：某路完成侦查（recon_done）且其他路未完成 → 该路**不等待**，总指挥单独下发 P2 先行任务（phase=P2 标记仅该路、禁忌"稍微放松"）；若该路侦查已含 flag 候选 → 直接 P3 先行（P1 直接跳 P3）；已先行 P2 的路满足 P3 条件（verified/flag）→ 升级 P3 先行。**全局阶段不变**，只有全部完成或 P1 限时才全局切换。全局 P1→P2 广播跳过已先行路（不回退）。

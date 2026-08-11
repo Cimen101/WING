@@ -274,7 +274,7 @@ class Commander:
             "innovative": "主攻非常规路径: 符号执行/代数闭式解/侧信道/线索交叉",
         }.get(style, f"按 {style} 风格探索解题路径")
 
-    # ---------- Sprint 36.5.2: 阶段禁忌 + P1 限时 (用户规范 2026-08-06) ----------
+    # ---------- Sprint 36.5.2: 阶段禁忌 + P1 限时 (2026-08-06) ----------
 
     def _phase_forbidden(self, phase: str, relaxed: bool = False) -> list[str]:
         """当前阶段的任务禁忌模板 (严格限定子解题器方向).
@@ -454,7 +454,7 @@ class Commander:
     def _phase_advance_rule(self) -> str:
         """基于当前汇报状态, 规则判定阶段切换 (Sprint 36.2 重构: 任务驱动 + 进度汇报驱动).
 
-        核心变更 (2026-08-05, 用户规范校准):
+        核心变更 (2026-08-05, 阶段门槛校准):
         - **P1→P2: 三路全部完成侦查汇报** (progress_count ≥1 且无死锁) 才进入 P2.
           不再是"任一 LIKELY 或汇报数≥4"的宽松门槛 — P1 必须对整题全面了解.
           简单题侦查范围收敛 (总指挥领题时按难度定制), 难题发散; 定期汇报防卡死.
@@ -464,7 +464,7 @@ class Commander:
         - P3→P4: 汇报含 flag 候选 (report_type=flag 或 content 含 flag 模式)
         - P4→P3: 提交失败 (submit_fail 汇报) — Sprint 36.5 补齐设计文档 4.5 缺失的回退
 
-        Sprint 36.5 (2026-08-06, 用户要求"不能跳 P4"):
+        Sprint 36.5 (2026-08-06, 阶段状态机实时切换强化):
         - **单级推进**: 每轮最多切换一级 (P1→P2 / P2→P3 / P3→P4), 不再 while 连跳.
           确保每级切换都经过对应确凿环节 (P1→P2 全局情报整合 / P2→P3 确凿分析 /
           P3→P4 flag 候选进入验证), 从根源杜绝"跳 P4".
@@ -493,7 +493,7 @@ class Commander:
             # 2026-08-05 校准: 不再用"任一 progress 即算完成" — 战略层 LLM 判断
             # 该路基础侦查已覆盖题目全貌 (recon_done) 才算完成; 全部完成后由
             # run_once 触发全局情报摘要整合 + 主方向确定, 之后才正式进入 P2.
-            # Sprint 36.5.2 (用户规范 2026-08-06): P1 严格限时 (1-2 分钟内) —
+            # Sprint 36.5.2 (2026-08-06): P1 严格限时 (1-2 分钟内) —
             # 达到限时即使未全部 recon_done 也强制推进 (仅 P1 有超时, 其他阶段不设限时).
             all_done = all(
                 entry.get("recon_done") for entry in self._style_reports.values()
@@ -525,7 +525,7 @@ class Commander:
         """P1 侦查是否超过限时 (Sprint 36.5.2: 仅 P1 有效, 1-2 分钟内强制推进)."""
         return (time.time() - self._phase_enter_ts) > self._p1_timeout_secs
 
-    # ---------- Sprint 36.5.2: P1 单路先行 (用户规范 2026-08-06) ----------
+    # ---------- Sprint 36.5.2: P1 单路先行 (2026-08-06) ----------
 
     def _solo_task(self, style: str, target: str, summary: str) -> str:
         """单路先行任务: 基于该路自己的侦查成果生成下一阶段任务 (不依赖全局主方向)."""
@@ -581,7 +581,7 @@ class Commander:
     def _try_solo_advance(self) -> list[CommanderDirective]:
         """Sprint 36.5.2: P1 单路先行检测与下发 (仅 P1 阶段).
 
-        规则 (用户规范 2026-08-06):
+        规则 (2026-08-06):
         - 某路新完成 P1 侦查 (recon_done) 且全局仍 P1 → 单独下发该路下一阶段任务:
           该路侦查已含 flag 候选 → 直接 P3 先行 (P1 直接跳 P3); 否则 P2 先行.
         - 已先行 P2 的路又满足 P3 条件 (verified/flag 汇报) → 升级为 P3 先行.
@@ -623,7 +623,7 @@ class Commander:
     def _p1_synthesize(self, bus: Any = None) -> list[CommanderDirective]:
         """Sprint 36.2 (WING-Corvus P1): 三路侦查全部完成 → 整合全局情报摘要 + 确定主方向.
 
-        流程 (用户规范 2026-08-05):
+        流程 (2026-08-05):
         1. 拉取三路全部 progress/recon_done 汇报 (各自独立侦查的成果)
         2. LLM 汇总生成**全局情报摘要** + **主方向** + 备选方向
         3. 记录摘要与主方向 (主方向正式确定, 之后修改仅两种途径)
@@ -724,7 +724,7 @@ class Commander:
     def _p2_verify_direction(self, bus: Any = None) -> list[CommanderDirective] | None:
         """Sprint 36.2 (WING-Corvus P2): P2→P3 前总指挥**确凿分析** verified 汇报.
 
-        用户规范 2026-08-05: 进入 P3 的必要因素是某方向**足够的证据支撑 + 取得验证**
+        设计约定 (2026-08-05): 进入 P3 的必要因素是某方向**足够的证据支撑 + 取得验证**
         + **汇报完整** + **总指挥分析确凿**. 此方法即"总指挥确凿分析"环节:
         1. 拉取全部 verified 汇报 (方向 + 完整验证证据)
         2. LLM 确凿分析: 证据支撑? 验证通过? 汇报完整? (反幻觉, 不脑补)
@@ -1004,7 +1004,7 @@ class Commander:
     def _make_phase_directives(self) -> list[CommanderDirective]:
         """阶段切换时按阶段为每路生成差异化任务指令 (SHOULD, 方向性指引).
 
-        各阶段每路的任务侧重 (Sprint 36.2 校准, 用户规范为准):
+        各阶段每路的任务侧重 (Sprint 36.2 校准):
         - P1: conservative 系统性扫描 / aggressive 直接尝试攻击记录响应 / innovative 非常规挖掘
         - P2: conservative 稳步主方向细节 / aggressive 快速深入主方向 / innovative 发散探索可能方向
         - P3: conservative 严谨利用 / aggressive 快速利用 / innovative 创造性利用
@@ -1054,7 +1054,7 @@ class Commander:
         """
         reports = self.consume_reports(bus)
         # Sprint 36.5.2: P1 限时兜底 (仅 P1 有效, 1-2 分钟内) — 无新汇报也要检查,
-        # 防止某路不汇报/汇报稀疏导致 P1 无限等待 (用户规范: 侦查必须快速建立完整画像).
+        # 防止某路不汇报/汇报稀疏导致 P1 无限等待 (设计约定: 侦查必须快速建立完整画像).
         if self._phase == "P1" and self._p1_expired():
             new_phase = self._phase_advance_rule()
             if new_phase == "P2":

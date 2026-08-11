@@ -729,7 +729,7 @@ class ReActEngine:
         # (self.max_steps = self.breaker.max_steps), for 循环也不会延长,
         # 方向正确的 agent 到原上限就被硬杀 (#2501 复盘: 协调器建议加步
         # 但实际无效果).
-        # Sprint 32.4b2 (用户要求: 尽量不做严格硬截断, 优先 LLM 软截断):
+        # Sprint 32.4b2 (设计约定: 尽量不做严格硬截断, 优先 LLM 软截断):
         # 改为 while True + 进展感知软截断 —
         # - 每步动态判断 max_steps (extend_steps 立即生效)
         # - 超过 max_steps 后不立即硬停, 由 breaker 进展感知决定:
@@ -1227,7 +1227,7 @@ class ReActEngine:
                         continue
 
                     # Sprint 28: 提交次数上限检查 — 不直接退出, 继续循环分析
-                    # 用户要求: 即使连续提交 20 次错误答案也不要直接退出
+                    # 设计约定: 即使连续提交 20 次错误答案也不直接退出
                     # 机制: 达上限后不再调用 submission_handler, 注入指导让 agent 继续工具分析
                     # 安全保护: increment consecutive_format_errors, 防止 agent 反复 Final Answer 死循环
                     # (agent 调用工具后 consecutive_format_errors 会重置为 0)

@@ -23,7 +23,7 @@
 - **智能上下文压缩**（memory/compressor.py）：长 hard 题上下文饱和导致 LLM 输出坍塌的根治方案——每轮实时打标保留级别（关键证据/关键工具/战略指导永不全压缩）、实时时间线串联关键事实、异步事件驱动动态压缩（不阻塞主循环）、逼近上限才一次性替换、首次空输出即压缩+提示词注入
 - **合规联网搜索**（tools/reverse_image_tool.py + prompts 规则）：`web_search` 通用技术查阅（算法/库/协议原理），工具级 + 提示词级双重护栏禁止搜索本题名/writeup/题解
 - **LWE 解码工具**（tools/lwe_tool.py）：已知误差绝对值 `|e|`（符号未知）时用缩放嵌入格 + LLL 恢复私钥 s，内置数学验证（A·s+e≡b mod q），支持数据文件模式
-- **内置知识库**（data/knowledge/packages/）：按题型分类的外部 CTF 知识包（crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa），下载即用
+- **内置知识库**（`data/knowledge/`）：`packages/` 按题型分类的外部 CTF 知识包（crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa，下载即用）+ `role_guides/` 题型分工指南与解题器执行策略（初始白板版，解题后自动沉淀）+ `brainteaser/` 脑洞题通用策略
 
 ## 目录结构
 
@@ -52,6 +52,21 @@ WING-Corvus/
 | :-- | :-- | :-- |
 | 单 agent 快速模式 | `python main.py run ...` | 单题快速验证/调试，**不启动** swarm/总指挥 |
 | 总指挥完整模式 | `.env` 开 `SWARM_ENABLED` + `SWARM_COMMANDER_ENABLED` + 调 `SwarmCoordinator` | 三风格并行 + 总指挥三层协作 |
+
+## Agent 专用镜像
+
+执行层默认运行在专用 Linux 容器中（内置完整 CTF 工具链 + `/opt/ctf` 预封装命令入口）。镜像随本仓库发布到 GitHub Container Registry（与本仓库绑定），获取方式：
+
+```bash
+# 1. 拉取（v6.2 与当前版本对应；latest 始终跟随最新）
+docker pull ghcr.io/cimen101/wing/wing-goose:v6.2
+
+# 2. .env 中指定该镜像
+DOCKER_ENABLED=true
+DOCKER_IMAGE=ghcr.io/cimen101/wing/wing-goose:v6.2
+```
+
+镜像为纯运行环境（不含源码）。本地也可基于源码自行构建（构建说明见 WING_CORVUS_DESIGN.md 执行层章节）。
 
 ### 单 agent 快速模式
 

@@ -94,12 +94,12 @@ WING 系列的执行层默认运行在专用的 Linux 容器中（内置 CTF 工
 
 ```bash
 # 1. 拉取最新版（v6.2，与当前 WING-Corvus 版本对应）
-docker pull ghcr.io/cimen101/wing/wing-goose:v6.2
-# 或始终跟随最新：docker pull ghcr.io/cimen101/wing/wing-goose:latest
+docker pull ghcr.io/cimen101/wing-docker:v6.2
+# 或始终跟随最新：docker pull ghcr.io/cimen101/wing-docker:latest
 
 # 2. 在对应版本目录的 .env 中指定该镜像
 DOCKER_ENABLED=true
-DOCKER_IMAGE=ghcr.io/cimen101/wing/wing-goose:v6.2
+DOCKER_IMAGE=ghcr.io/cimen101/wing-docker:v6.2
 ```
 
 镜像为纯运行环境（不含源码），配合本仓库三个版本（WING-Falcon / WING-Goose / WING-Corvus）均可直接使用。也可基于 `WING-Corvus` 源码自行构建（`Dockerfile` 与构建说明见 DESIGN 文档执行层章节）。

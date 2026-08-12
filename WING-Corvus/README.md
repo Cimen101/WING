@@ -59,11 +59,11 @@ WING-Corvus/
 
 ```bash
 # 1. 拉取（v6.2 与当前版本对应；latest 始终跟随最新）
-docker pull ghcr.io/cimen101/wing/wing-goose:v6.2
+docker pull ghcr.io/cimen101/wing-docker:v6.2
 
 # 2. .env 中指定该镜像
 DOCKER_ENABLED=true
-DOCKER_IMAGE=ghcr.io/cimen101/wing/wing-goose:v6.2
+DOCKER_IMAGE=ghcr.io/cimen101/wing-docker:v6.2
 ```
 
 镜像为纯运行环境（不含源码）。本地也可基于源码自行构建（构建说明见 WING_CORVUS_DESIGN.md 执行层章节）。

@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "description": "环境依赖问题解决方案 - 用于快速解决二进制运行时依赖",
+  "solutions": {
+    "glibcxx_missing": {
+      "name": "GLIBCXX_x.x.x 版本缺失",
+      "symptom": "运行二进制报错: /lib/x86_64-linux-gnu/libstdc++.so.6: version 'GLIBCXX_3.4.32' not found",
+      "root_cause": "二进制由更新的GCC编译(GCC 14.x), 容器中的libstdc++版本较旧(GCC 12.x只有GLIBCXX_3.4.30)",
+      "solutions": [
+        {"name": "从Ubuntu 24.04下载更新的libstdc++6", "command": "wget http://security.ubuntu.com/ubuntu/pool/main/g/gcc-14/libstdc++6_14.2.0-1ubuntu1~24.04.2_amd64.deb && dpkg -x libstdc++6_*.deb /tmp/libstdc && cp /tmp/libstdc/usr/lib/x86_64-linux-gnu/libstdc++.so.6* /usr/lib/x86_64-linux-gnu/ || LD_LIBRARY_PATH=/tmp/libstdc/usr/lib/x86_64-linux-gnu"},
+        {"name": "下载后将LD_LIBRARY_PATH指向新库", "command": "export LD_LIBRARY_PATH=/tmp/libstdcpp/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH && ./chal"},
+        {"name": "从conda-forge下载libstdcxx-ng", "command": "wget https://anaconda.org/conda-forge/libstdcxx-ng/14.1.0/download/linux-64/libstdcxx-ng-14.1.0-*.conda && (解压后提取lib/libstdc++.so.6)"}
+      ],
+      "detection": "ldd <binary> | grep 'not found' 查看缺失库; strings <libstdc++> | grep GLIBCXX | tail 查看容器库版本",
+      "note": "优先静态分析, 不要因为环境问题卡死。libstdc++可临时通过LD_LIBRARY_PATH解决"
+    },
+    "qemu_multiarch": {
+      "name": "多架构二进制运行",
+      "symptom": "x86_64容器无法直接运行ARM/MIPS/其他架构二进制",
+      "solutions": [
+        {"name": "qemu-user", "command": "qemu-mips-static ./binary 或 qemu-aarch64-static ./binary"},
+        {"name": "Docker跨架构", "command": "docker run --rm --platform=linux/arm64 -v $(pwd):/work ubuntu:24.04 /work/binary"}
+      ],
+      "note": "qemu-user已预装(qemu-user/qemu-user-static)"
+    },
+    "mame_install": {
+      "name": "MAME 安装",
+      "symptom": "运行Neo Geo游戏需要MAME模拟器",
+      "solutions": [
+        {"name": "apt安装", "command": "apt-get install -y mame"},
+        {"name": "运行(需hash和roms目录)", "command": "mame -hashpath hash -rp roms -nocoinlock -noautosave -skip_gameinfo neogeo gctf"}
+      ],
+      "note": "需要正确的hash/neogeo.xml和roms/neogeo.zip + roms/gctf.zip"
+    },
+    "pyboy_install": {
+      "name": "pyboy GameBoy模拟器",
+      "symptom": "需要模拟GameBoy ROM",
+      "solutions": [
+        {"name": "pip安装", "command": "pip3 install pyboy"},
+        {"name": "headless运行", "command": "python3 -c \"from pyboy import PyBoy; pb=PyBoy('rom.gb', window_type='headless')\""}
+      ],
+      "note": "若pyboy无法加载, 可能需要修复ROM checksum (替换头部校验和字节)"
+    }
+  }
+}

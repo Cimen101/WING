@@ -1424,7 +1424,7 @@ WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为�
 
 ### 12.10 知识库四层重构（Sprint 40.5）
 
-`data/knowledge/` 重构为四层知识体系：
+`data/knowledge/` 重构为多层知识体系（含运行沉淀层与静态知识层分离）：
 
 | 层 | 内容 | 维护方式 |
 |----|------|----------|
@@ -1432,9 +1432,10 @@ WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为�
 | `role_guides/` | 题型分工指南（每题型 1 个 + 每题型×风格 1 个，P1-P4 分阶段含推进标准） | 只改不增，P1-P4 分阶段 |
 | `playbooks/` + `pitfalls/` | 分目录套路 + 避坑（auto.md 由 curator 生成） | curator 写入 |
 | `patterns/` | 抽象经验（skill_library.json） | curator 写入 |
+| `structured/` | **静态确定性知识**（JSON）：`algorithm_fingerprints.json` 算法指纹 / `architecture_guides.json` 架构与模拟器指南 / `environment_solutions.json` 环境依赖解法 | 只读，随发行版提供 |
 | `archived/` | 旧版本 MD 封存 | 只读 |
 
-- `ctf_agent/knowledge/kb.py`：`KnowledgeBase` 统一检索（retrieve(task,type,role,style,phase) + infer_phase + merge_playbook 查重合并）。
+- `ctf_agent/knowledge/kb.py`：`KnowledgeBase` 统一检索（retrieve(task,type,role,style,phase) + infer_phase + merge_playbook 查重合并）；另提供 `structured()` 结构化知识查询（`_load_structured` 加载 `structured/` 下 JSON，按 challenge_type/task 匹配注入）。
 - `ctf_agent/knowledge/curate.py`：skill_curator 管线 extract→verdict→refine→merge→compress→persist + finally 兜底落盘 curator_log.jsonl。
 - 注入点：react.py（战术层阶段化 mid-solve）/ coordinator.py（战略层 _query_knowledge）/ commander.py（总指挥 assign_initial 外部包主题）。
 - ⚠️ `ctf_agent/knowledge` 包原导出（ARSENAL/format_arsenal/list_categories）必须保留合并到 `__init__`。
@@ -1458,7 +1459,7 @@ WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为�
 | 通用执行 | ssh_exec / ssh_python / docker_exec / docker_python / ssh_upload / docker_upload / file_read / file_analyze |
 | Web | http_request / web_recon / web_fingerprint / web_dirscan / lfi_scanner / sqlmap（总线） / encoding_helper |
 | Pwn | pwn_checksec / pwn_cyclic / pwn_ropgadget / pwn_exploit / exploit_template |
-| Reverse | angr_symbolic_exec / binary_analyze / binary_tool / apk_decompile / feistel_tool / mem_xor_analyze / **binary_deep_analyze**（深度分析，支持 gameboy/ieee/constants 模式）/ **binary_constants**（大整数常量提取）/ **cgb_solve**（GameBoy ROM 复合求解）/ **fluffy_solve**（Flutter APK 复合求解） |
+| Reverse | angr_symbolic_exec / binary_analyze / binary_tool / apk_decompile / feistel_tool / mem_xor_analyze / **binary_deep_analyze**（深度分析，支持 gameboy/ieee/constants/crypto/stat 模式）/ **binary_constants**（大整数常量提取）/ **cgb_solve**（GameBoy ROM 复合求解）/ **fluffy_solve**（Flutter APK 复合求解） |
 | Crypto | crypto_rsa / crypto_classic / des_cryptanalysis / feistel_decrypt / ecdsa_nonce_reuse / sage_common_d_attack / **lwe_decode**（已知 \|e\| 恢复 s） |
 | Misc/Forensics | osint_exiftool / osint_steghide / osint_binwalk / osint_tshark / vision_analyze / ocr / mem_xor_tool / **bkcrack_attack**（zipCrypto 已知明文攻击） |
 | OSINT / 通用查阅 | web_search（通用技术查阅 + 合规护栏）/ osm_geocode / reverse_image_search / vision_analyze |
@@ -1467,12 +1468,14 @@ WING-Corvus `data/` 内置两层**预置知识**（下载即用），其余为�
 
 ### 13.4 深度逆向分析工具（binary_deep_analyze）
 
-`ctf_agent/tools/binary_deep_analyze.py`：增强版逆向分析工具，`_MAX_OUTPUT=8000`，支持 4 种分析模式：
+`ctf_agent/tools/binary_deep_analyze.py`：增强版逆向分析工具，`_MAX_OUTPUT=8000`，支持 6 种分析模式：
 
-- **`mode='auto'`**（默认）：自动检测模式，通过 `_detect_mode` 判断（`file` 命令 + ROM 头 Nintendo logo 检测 GameBoy；ELF/executable 判 IEEE；否则 constants）。
+- **`mode='auto'`**（默认）：自动检测模式，通过 `_detect_mode` 判断（`file` 命令 + ROM 头 Nintendo logo 检测 GameBoy；ELF/executable 判 IEEE；轻量 crypto 指纹预检——AES S-box / TEA delta / RSA e=65537 / secp256k1 prime——命中则判 crypto；高熵加密代码段（x86 置换加密特征）判 stat；否则 constants）。
 - **`mode='gameboy'`**：GameBoy ROM 分析——ROM 头部解析（标题/映射器/CGB 标志/校验和）、CTF/flag 模式搜索（8 种编码）、tile 数据唯一性分析、pyboy 可用性检测、CGB Feistel 解密尝试、自动生成求解脚本。
 - **`mode='ieee'`**：IEEE 754 浮点逆向——ELF section 解析、128bit+ 大整数扫描、float64 特殊值检测、objdump 大 hex 常量提取、angr 符号执行尝试（60s 超时）。
 - **`mode='constants'`**：常量深度提取——objdump 段 dump + 全二进制 128bit/96bit+ 大整数扫描。
+- **`mode='crypto'`**（算法指纹识别）：内置常见算法特征数据库，扫描二进制 `.rodata`/`.data` 自动匹配——AES 标准 S-box（含逆 S-box）、TEA delta 常量（0x9E3779B9 / 自定义 0xDEADBEEF）、RSA 常见模数/指数、ECC 曲线参数（secp256k1 prime 等），输出"疑似算法 + 置信度 + 关键参数位置"。解决 Paillier 参数形状与 RSA 相似导致算法误判的问题。
+- **`mode='stat'`**（统计推理/置换推导）：对加密代码段做字节频率统计、熵分析、n-gram 分析，结合目标架构指令分布先验，自动推导置换表等统计型逆向难题。
 
 ### 13.5 CGB GameBoy 复合求解工具（cgb_solve）
 
@@ -2347,5 +2350,8 @@ WING-Corvus（渡鸦）── 协作小队（当前最新版）
 | 36.5.2 | 单路先行 + 任务禁忌 + P1 限时 | 严格落实 docs/阶段式协调.md：directive 新增 forbidden（任务禁忌按阶段模板）；任务完成闭环（`_task_done` 等待新任务抑制空转）；P1 单路先行（完成侦查的路单独下发 P2 先行任务/含 flag 直接 P3 先行/先行 P2 满足条件升级 P3，全局阶段不变）；P1 严格限时 60-120s（LLM 定制+难度兜底，仅 P1 有超时，P2/P3/P4 按文档切换不设限时）；全局 P1→P2 广播跳过先行路 |
 | 37 | FlagVerifier 证据链升级（reverse 提取场景） | `_find_all_sources` 四级证据形态：完整明文 / 编码变体（hex/空格hex/十进制字节列表/0x 列表，覆盖 objdump/xxd 提取）/ core 前 8 字符 / core 分段覆盖（拼接式 flag）；`_is_program_verify` 程序验证豁免（echo flag \| wine + Correct! 不再误判自导自演）；`_rejected_flags` 改软锁（有新证据即解除拉黑，破解"先误拒后永久拦截"死锁）；`_split_core` 滑窗分段覆盖。验证：ida-reverse-course CH4（maze）从三路 1207s 超时 → conservative 241s 解出 |
 | 37.1 | 已解出未提交检测 | `_check_solved_not_submitted` L1 规则级检测：完整 flag 候选 + 验证信号 + 无提交意图 + ≥2 步提取工具 → 双分支干预（已验证→MUST 强制提交；未验证→引导运行程序验证或直接提交试错，解释 movabs 边界字节重叠如 junnk）。验证：CH8（junkcode）从三路 1207s 超时 → conservative 650.9s 解出 |
+| 38 | MUST 强制跳转 | MUST 指令被连续忽略 ≥2 步时强制跳转：`_must_ignore_count` 计数器追踪连续忽略步数，超阈值触发 `[FORCE]` 标记强制干预，防止总指挥/战略层 MUST 指令被 agent 空转忽略 |
+| 40 | 巡查工具使用检测增强 | 新增专用工具过度使用检测：`ssh_exec` 占比 >60% 时警告改用专用工具（binary_analyze/binary_deep_analyze/angr）；`vision_analyze` 连续 ≥3 次时警告其只能分析图片不能分析二进制/代码；叠加原有同工具重复 ≥5 次（参数不同）思路固化软线索 |
+| 40.5 | 结构化知识库（structured/） | `data/knowledge/structured/` 新增静态确定性知识 JSON：`algorithm_fingerprints.json`（AES S-box / TEA delta / RSA / ECC 指纹）、`architecture_guides.json`（MAME/pyboy/多架构 VM 指南）、`environment_solutions.json`（GLIBCXX 缺失等环境依赖解法）；`kb.py` 新增 `structured()` 查询接口（按 challenge_type/任务关键词匹配注入），解决算法误判（Paillier↔RSA）与环境依赖断链 |
 
-> 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、13.4 镜像、13.5 LWE 工具、13.6 合规搜索；迭代验证记录见 `dev-notes/`。
+> 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、12.10 知识库多层体系、13.4 深度逆向分析工具（含 crypto/stat 模式）、13.9 LWE 工具、13.10 合规搜索；迭代验证记录见 `dev-notes/`。

@@ -23,7 +23,7 @@
 - **智能上下文压缩**（memory/compressor.py）：长 hard 题上下文饱和导致 LLM 输出坍塌的根治方案——每轮实时打标保留级别（关键证据/关键工具/战略指导永不全压缩）、实时时间线串联关键事实、异步事件驱动动态压缩（不阻塞主循环）、逼近上限才一次性替换、首次空输出即压缩+提示词注入
 - **合规联网搜索**（tools/reverse_image_tool.py + prompts 规则）：`web_search` 通用技术查阅（算法/库/协议原理），工具级 + 提示词级双重护栏禁止搜索本题名/writeup/题解
 - **LWE 解码工具**（tools/lwe_tool.py）：已知误差绝对值 `|e|`（符号未知）时用缩放嵌入格 + LLL 恢复私钥 s，内置数学验证（A·s+e≡b mod q），支持数据文件模式
-- **内置知识库**（`data/knowledge/`）：`packages/` 按题型分类的外部 CTF 知识包（crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa，下载即用）+ `role_guides/` 题型分工指南与解题器执行策略（初始白板版，解题后自动沉淀）+ `brainteaser/` 脑洞题通用策略
+- **内置知识库**（`data/knowledge/`）：`packages/` 按题型分类的外部 CTF 知识包（crypto/pwn/web/reverse/forensics/misc/osint/ai-ml/malware/rsa，下载即用）+ `role_guides/` 题型分工指南与解题器执行策略（初始白板版，解题后自动沉淀）+ `brainteaser/` 脑洞题通用策略 + `structured/` 静态确定性知识（算法指纹 / 架构指南 / 环境依赖解法）
 
 ## 目录结构
 

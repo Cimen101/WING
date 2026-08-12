@@ -1,0 +1,57 @@
+{
+  "version": "1.0",
+  "description": "架构与模拟器使用指南 - 用于特殊架构逆向和模拟器配置",
+  "guides": {
+    "mame_neogeo": {
+      "name": "MAME Neo Geo 模拟器",
+      "usage": "mame -hashpath <hash_dir> -rp <roms_dir> -nocoinlock -noautosave -skip_gameinfo neogeo <game_name>",
+      "roms_required": ["neogeo.zip (BIOS)", "gctf.zip (游戏卡带)"],
+      "hash_required": "neogeo.xml (MAME软件清单, 含CRC/SHA1)",
+      "interaction": "按5插入硬币, 按1开始, 方向键+字母键操作",
+      "notes": "若MAME报错, 先验证ROM的CRC是否匹配hash中的值"
+    },
+    "gameboy_pyboy": {
+      "name": "GameBoy Color - pyboy 模拟器",
+      "usage": "from pyboy import PyBoy; pyboy = PyBoy('rom.gb', window_type='headless')",
+      "wram_access": "pyboy.memory[0xFF70] = 1 (切换WRAM bank1); data = pyboy.memory[0xD000:0xE000]",
+      "key_offsets": {
+        "encrypted_flag": "WRAM bank1 offset 0x51FA (40字节, 运行时地址)",
+        "key": "WRAM bank1 offset 0x02DC (40字节, palette索引)"
+      },
+      "decryption": "Feistel网络 + palette映射 + 字符映射表 (0x09-0x22→A-Z, 0x23-0x3c→a-z, 0x3d-0x46→0-9, 0x47-0x4c→@_-{}?)"
+    },
+    "multiarch_vm": {
+      "name": "Multiarch 双架构虚拟机",
+      "description": "自定义双架构(StackVM+RegVM)解释器, crackme.masm是被解释的程序",
+      "runner": "python3 runner.py (读取/flag并设置FLAG环境变量, 调用multiarch crackme.masm)",
+      "challenges": [
+        {"name": "Challenge 1 (StackVM)", "input": "1个dword", "answer": "ans1 = 0xaaaaaaaa - ((0x1337<<16|1337) ^ 0x8675309)"},
+        {"name": "Challenge 2 (RegVM)", "input": "0x20字节", "answer": "val = ((0x7331 << 32) // 0xcafebabe) + 7, p32(val)"},
+        {"name": "Challenge 3 (混合)", "input": "循环最多10次", "answer": "依赖PRNG(种子可预测), 爆破或预测"}
+      ],
+      "flag_output": "通关后程序执行SYS_FLAG, 打印 'Here, have a flag: <FLAG>'",
+      "local_run": "export FLAG=$(cat /challenge/workspace/flag); ./multiarch crackme.masm"
+    },
+    "neogeo_68k_z80": {
+      "name": "Neo Geo 双CPU架构 (68K + Z80)",
+      "description": "P1 ROM (68K) 负责游戏逻辑, M1 ROM (Z80) 负责加密/比对",
+      "key_components": {
+        "admin_panel": "科乐美秘籍进入 (UP,DOWN,D,C,D,C,B,B,A,A), 编辑KEY和FLAG",
+        "tea_encryption": "Z80执行自定义TEA (delta=0xDEADBEEF, 32轮)",
+        "encrypted_flag": "硬编码在Z80 M1 ROM (org $cafe, 32字节)"
+      },
+      "solution": "提取密文 → 识别TEA(delta=0xDEADBEEF) → 找/推导KEY → 解密"
+    },
+    "x86_permutation": {
+      "name": "x86 置换加密逆向",
+      "description": "代码段被256字节置换表加密, 输入正确的0-255全排列后解密",
+      "key_components": {
+        "encrypted_section": "高熵(256/256唯一字节), 通常位于.text或自定义段",
+        "permutation": "256字节的0-255全排列, 输入作为序列号",
+        "decryption": "out[i] = perm[enc[i]] 逐字节置换",
+        "decrypted_code": "解密后为合法x86汇编, 通常包含flag输出逻辑"
+      },
+      "solution_hint": "统计加密段字节频率 → 按频率排序映射到x86指令字节频率先验 → 解出部分置换 → 验证解密结果"
+    }
+  }
+}

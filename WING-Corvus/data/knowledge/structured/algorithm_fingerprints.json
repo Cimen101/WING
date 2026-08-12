@@ -1,0 +1,82 @@
+{
+  "version": "1.0",
+  "description": "加密算法指纹库 - 用于二进制逆向时自动识别密码算法",
+  "algorithms": {
+    "aes": {
+      "name": "AES (Advanced Encryption Standard)",
+      "detection": {
+        "sbox": "0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5... (256字节标准Rijndael S-box)",
+        "inv_sbox": "0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38... (AES逆S-box前16字节)",
+        "round_constants": "0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36"
+      },
+      "modes": ["ECB", "CBC", "CTR", "GCM"],
+      "key_size": [16, 24, 32],
+      "block_size": 16
+    },
+    "tea": {
+      "name": "TEA (Tiny Encryption Algorithm)",
+      "detection": {
+        "standard_delta": "0x9E3779B9",
+        "custom_delta_hint": "CTF题中常见自定义delta: 0xDEADBEEF, 0x12345678等"
+      },
+      "rounds": 32,
+      "block_size": 8,
+      "key_size": 16
+    },
+    "rsa": {
+      "name": "RSA (Rivest-Shamir-Adleman)",
+      "detection": {
+        "common_e": "0x10001 (65537, 标准公钥指数), 0x03 (低指数, 可能有广播攻击)",
+        "n_bit_length": "512-4096 bit",
+        "der_sequence": "0x30 0xxx 0x30 0x0d 0x06 0x09 0x2a 0x86 0x48 0x86 0xf7 0x0d 0x01 0x01 0x01 (RSA公钥DER编码)"
+      },
+      "attacks": {
+        "wiener": "e极大或极小(接近N)时可用Wiener攻击恢复d",
+        "common_modulus": "同N不同e加密同明文时可用扩展欧几里得",
+        "fermat": "p,q接近时可用Fermat分解",
+        "low_exponent": "e=3时小明文广播攻击",
+        "stereotype": "已知部分明文时Coppersmith"
+      }
+    },
+    "paillier": {
+      "name": "Paillier Homomorphic Encryption",
+      "detection": {
+        "structure": "公钥(N, g), N为半素数, g通常为N+1或随机数",
+        "n_bit_length": "512-2048 bit",
+        "lambda": "λ = lcm(p-1, q-1), 私钥的一部分",
+        "hint": "与RSA区别: Paillier有专门的g参数(通常较大), 且密文是模N^2的"
+      },
+      "property": "加法同态: E(m1)*E(m2) = E(m1+m2)",
+      "common_usage": "CTF中常作为RSA的替代或混淆, 注意识别g参数位置"
+    },
+    "ecc": {
+      "name": "Elliptic Curve Cryptography",
+      "detection": {
+        "secp256k1_prime": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F",
+        "secp256r1_prime": "0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF",
+        "curve25519": "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED"
+      },
+      "common_curves": ["secp256k1", "secp256r1", "Curve25519", "secp192r1", "secp384r1"]
+    },
+    "md5": {
+      "name": "MD5 Message Digest",
+      "detection": {
+        "initial_values": "A=0x67452301, B=0xEFCDAB89, C=0x98BADCFE, D=0x10325476"
+      }
+    },
+    "sha256": {
+      "name": "SHA-256",
+      "detection": {
+        "first_K_constant": "0x428A2F98",
+        "initial_values": "H1=0x6A09E667, H2=0xBB67AE85, H3=0x3C6EF372, H4=0xA54FF53A"
+      }
+    },
+    "xorshift64": {
+      "name": "xorshift64 PRNG",
+      "detection": {
+        "formula": "x ^= x << a; x ^= x >> b; x ^= x << c (常见参数a=13,b=7,c=17)",
+        "usage": "常用于生成伪随机序列, 密钥流, 或置换数组"
+      }
+    }
+  }
+}

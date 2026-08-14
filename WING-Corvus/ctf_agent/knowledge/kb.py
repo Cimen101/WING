@@ -93,7 +93,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 def _section_by_phase(md_text: str, phase: str) -> str:
     """从 role_guides MD 中按 ## P1~P4 提取对应段落 (只取当前阶段, 不含前言).
 
-    用户规则: "按对应阶段注入压缩上下文同时避免分心" — 只注入当前阶段段落,
+    设计规则: "按对应阶段注入压缩上下文同时避免分心" — 只注入当前阶段段落,
     不携带维护规则/其他阶段内容; 保留阶段标题行供 LLM 识别阶段.
     无分阶段标题时回退取开头 (兼容未分阶段的历史文件).
     """
@@ -479,7 +479,7 @@ class KnowledgeBase:
 
 
 def merge_playbook(existing: str, new: str, threshold: float = 0.35) -> tuple[str, bool]:
-    """playbook 增添前查重合并 (用户规则: 增添前先查重, 相似则在原文件上完善).
+    """playbook 增添前查重合并 (设计规则: 增添前先查重, 相似则在原文件上完善).
 
     Returns:
         (merged_text, changed): 合并后文本 + 是否发生了实际变更.

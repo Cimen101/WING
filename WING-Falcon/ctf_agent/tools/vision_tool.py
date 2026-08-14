@@ -21,16 +21,17 @@
 from __future__ import annotations
 
 import base64
+import os
 from typing import Any, Optional
 
 from ctf_agent.ssh import SSHClient
 from ctf_agent.tools.base import Tool
 
 
-# 小米 MIMO-2.5 全模态模型配置
-MIMO_API_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
-MIMO_API_KEY = "tp-cgg7b3h86cg0f4h47m5ir6acyptqpvwvxmpphy3sxei3kkx6"
-MIMO_MODEL = "mimo-v2.5"
+# 小米 MIMO-2.5 全模态模型配置 (key 从环境变量读取, 不硬编码)
+MIMO_API_URL = os.environ.get("VISION_API_URL", "https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
+MIMO_API_KEY = os.environ.get("VISION_API_KEY", "")  # 必填, 由 .env 提供
+MIMO_MODEL = os.environ.get("VISION_API_MODEL", "mimo-v2.5")
 
 # 输出截断阈值
 _MAX_OUTPUT = 6000
@@ -41,6 +42,8 @@ _TRUNCATED_SUFFIX = "\n... (输出截断,共 {total} 字符)"
 _VISION_SCRIPT = r'''import base64, json, sys, io, os, subprocess, urllib.request
 file_path = base64.b64decode(sys.argv[1]).decode("utf-8")
 question = base64.b64decode(sys.argv[2]).decode("utf-8")
+# API key 由宿主进程经 argv[3] 注入 (不硬编码)
+_mimo_api_key = base64.b64decode(sys.argv[3]).decode("utf-8") if len(sys.argv) > 3 else ""
 
 # 按扩展名/魔数判断模态类型
 def detect_modality(fp):
@@ -176,7 +179,7 @@ else:  # audio
     url_prefix = f"data:{mime};base64,"
 
 API_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
-API_KEY = "tp-cgg7b3h86cg0f4h47m5ir6acyptqpvwvxmpphy3sxei3kkx6"
+API_KEY = _mimo_api_key
 MODEL = "mimo-v2.5"
 
 payload = {
@@ -276,12 +279,16 @@ class VisionAnalyzeTool(Tool):
         # base64 编码参数 (避免 shell 转义问题)
         fp_b64 = base64.b64encode(file_path.encode("utf-8")).decode("ascii")
         q_b64 = base64.b64encode(question.encode("utf-8")).decode("ascii")
+        # API key 经 argv[3] 注入容器脚本 (不硬编码)
+        if not MIMO_API_KEY:
+            return "ERROR: 未配置 VISION_API_KEY 环境变量 (vision_analyze 需要多模态 API key, 请在 .env 中设置)"
+        key_b64 = base64.b64encode(MIMO_API_KEY.encode("utf-8")).decode("ascii")
 
         # 写脚本到 Kali 并执行
         script_b64 = base64.b64encode(_VISION_SCRIPT.encode("utf-8")).decode("ascii")
         cmd = (
             f"echo '{script_b64}' | base64 -d > /tmp/_vision_analyze.py && "
-            f"python3 /tmp/_vision_analyze.py '{fp_b64}' '{q_b64}' 2>&1"
+            f"python3 /tmp/_vision_analyze.py '{fp_b64}' '{q_b64}' '{key_b64}' 2>&1"
         )
         r = self.ssh.exec_cmd(cmd, timeout=400)
         raw = (r.stdout or "").strip()

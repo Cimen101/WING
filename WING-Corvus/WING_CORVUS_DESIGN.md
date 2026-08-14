@@ -2,7 +2,7 @@
 
 > **文档性质**：CTF 自动化解题系统 WING-Corvus 的完整设计文档 + 使用指南
 > **版本**：WING-Corvus（协作小队 Coordinated Squad）
-> **最后更新**：2026-08-05
+> **最后更新**：2026-08-14
 > **上游版本**：WING-Goose（雁阵，含 swarm 三风格并行 / 总线 / 复盘 / docker 链）
 > **代码位置**：`WING-Corvus/`（含 `ctf_agent/` 源码、`main.py`、`pyproject.toml`、`.env.example`）
 > **编写方式**：本文档基于对 WING-Corvus 源码的实际逐行审计撰写，所有描述与实现一致，未编造任何代码中不存在的功能。
@@ -31,8 +31,9 @@
 18. [部署与运维](#18-部署与运维)
 19. [安全与伦理](#19-安全与伦理)
 20. [使用方法](#20-使用方法)
-21. [常见问题排查](#21-常见问题排查)
-22. [附录](#22-附录)
+21. [外部系统接入指南（开放接口）](#21-外部系统接入指南开放接口)
+22. [常见问题排查（补充）](#22-常见问题排查补充)
+23. [附录](#23-附录)
 
 ---
 
@@ -1313,6 +1314,20 @@ P1 侦查 → P2 漏洞识别 → P3 利用 → P4 验证 → 结束
 - 全部写操作持锁（threading.Lock），原子 append。
 - 所有读操作异常兜底（文件不存在返回空、JSON 解析失败跳过该行）。
 
+### 11.6 证据树共享（Sprint 38, P2 漏洞确认阶段）
+
+P2 漏洞确认阶段引入**证据决策二叉树**（`ctf_agent/evidence/__init__.py`），每路解题器独立维护一棵树，将"侦查结论 → 攻击方向"的推理过程结构化：
+
+- **内部节点 = 二元问题**（是否？），附 `verify_method`（验证方法/命令）、`expected_yes/expected_no`（判定标准）、`confirm_action`（确认动作，如正反对照/双独立验证）。
+- **叶子节点 = 假设（漏洞候选）**；根到叶路径 = 完整证据链。
+- 节点答案必须通过**确认协议**（tentative → confirmed）才参与路径选择与共享；未确认节点（pending/tentative/unknown）不参与路径、不共享。
+
+**共享协议（node_verdict）**：`FileBus.post_node_verdict(task_id, verdict)` 仅允许发布 `status=confirmed` 的结论（100% 正确才共享，设计约定）；`check_node_verdicts` 供兄弟路消费，按 L1 精确键 / L2 语义 / L3 无匹配独立验证三级去重采纳。
+
+**任务驱动闭环（deliverables）**：P1 侦查任务带 `deliverables`（产出物清单）作为验收标准（`post_directive` 新增字段），战术层按清单逐项汇报才算任务完成，未产出即反复扫描会被巡查拉回；证据树生长缺信息时经 `report_need_recon` 请求补充侦查（侦查与树互相驱动）。
+
+**战术层接入**：每 5 步（`_tree_step` 节流）①消费兄弟 confirmed verdict 注入"已确认结论"提示 → ②发布本路已确认节点 → ③注入当前待验证节点任务（问题+验证方法），引导主循环执行验证而非自由发挥。
+
 ---
 
 ## 12. 记忆层与知识体系
@@ -1508,11 +1523,11 @@ Feistel 轮函数：字节循环移位（移位方向/次数由子密钥 bit 控
 ### 13.8 Docker 执行链（WING-Goose Item 5）
 
 - `DOCKER_ENABLED=true`（默认）→ Docker Desktop 容器替代 ssh 执行层；daemon 不可用自动降级到 ssh；KALI_ENABLED=false（默认）时关闭 Kali 路由，纯 Docker 执行层。
-- 默认镜像 `wing-goose:v4`（补装 fpylll/angr/torch 等 6 库 + 预封装入口）；v1 以 latest 标签保留作为回滚点。
+- 默认镜像 `wing-goose:v2`（补装 fpylll/angr/torch 等 6 库 + 预封装入口）；v1 以 latest 标签保留作为回滚点。
 - 多容器：每 agent 独立容器（容器名按题参数化 `wing-goose-<agent_id>`，同题复用/异题隔离）；显式配置 DOCKER_CONTAINER 尊重单容器模式。
 - 资源调控 Profile：light(1核/1G) / normal(2核/2G) / brute(4核/2G) / heavy(4核/4G)；最大并发容器数 + 预留因子。
 - 附件宿主目录 → 容器 `/challenge/workspace`；同题共享目录 → 容器 `/shared`；`force_reset=true` 强制全新环境。
-- 默认镜像公开于 `ghcr.io/cimen101/wing-goose:v4`（`docker pull` 即用）。
+- 发布镜像公开于 `ghcr.io/cimen101/wing-docker:v6.2`（`docker pull` 即用，见顶层 README）。
 
 ### 13.9 LWE 解码工具（tools/lwe_tool.py）
 
@@ -1544,6 +1559,46 @@ DockerClient 支持 `env` 参数，在容器创建时注入环境变量（如 `F
 - `DockerClient.__init__(env=dict)` 存储环境变量。
 - `_run_new` 方法中为每个 `key=value` 添加 `-e KEY=VAL` 到 docker run flags。
 - `solve.py` 从任务 JSON 的 `env` 字段传递到 DockerClient，附件目录不含 `flag` 文件（需通过环境变量注入的题目，如 multiarch-1 的 `FLAG` 环境变量）。
+
+### 13.13 侦查去重与饱和检测（Sprint 41）
+
+针对 "P2 阶段反复执行同一批只读侦查命令、从不写脚本推进" 的空转模式（rev-zermatt 复盘：flash 组三路 25-36 步全 `ssh_exec` 且命令是 ls/cat/grep/strings/xxd），战术层与战略层分别增加三道防线：
+
+**① 只读侦查命令去重缓存**（`react.py` `_check_recon_cmd_repeat` / `_record_recon_cmd`）：
+
+- 仅拦截纯只读侦查命令（ls/cat/grep/strings/xxd/head/tail/file/wc/which/find/stat），带管道/重定向/分号/脚本 heredoc 的复杂命令不拦截（可能在做不同加工）。
+- 命令归一化（折叠空白 + 去 `--color` 等尾参数）后，同一命令已执行过 → 返回提示（每条命令只提示一次，之后放行防过度干扰）。
+- **成功执行后才登记指纹**（失败不登记，避免重试被误提示）。
+
+**② 脚本重复提示**（`react.py` `_check_script_dup`）：
+
+- 对 `ssh_python`/`docker_python`，脚本前 60 字符归一化（去空白 + 数值替换为 `N`）后同前缀出现 ≥3 次 → 提示"反复运行同主体脚本 = 在相同数据上空转"，引导写针对下一步目标的新脚本。
+
+**③ P2 侦查饱和检测**（`coordinator.py` `_check_recon_saturation`）：
+
+- 步数 ≥14 且最近 lookback 窗口内：执行类工具（ssh_exec/docker_exec/http_request）占比高、但 ssh_python/攻击类/协作类"产出型动作"出现次数为 0 → 判定侦查饱和。
+- 纯侦查命令计数：含写文件/上传/网络请求（tee/> /wget/curl/nc）的执行命令视为"动作"不计数。
+- 命中即下发 `[MUST]` 强制指令：立即用 ssh_python 写脚本解析已收集数据并运行验证，或构造 payload，停止重复查看同一批文件。
+
+### 13.14 zipCrypto 已知明文攻击工具（bkcrack_attack）
+
+`ctf_agent/tools/bkcrack_tool.py`：调用 Kali 预装 bkcrack 对 zipCrypto 加密 zip 做已知明文攻击。
+
+- **两种已知明文方式**：`known_plain_path`（明文文件，`-p` 模式 + `offset`）与 `known_bytes`（十六进制字节，`-x` 模式 + `known_offset`，默认 12 跳过 12 字节 nonce 加密头）。
+- **前置校验**：hex 合法性、bkcrack 可用性在任何 ssh 调用前检查；`known_bytes` 提供值必须为十六进制。
+- **后台运行 + 轮询**：`nohup` 后台启动，每 10s 检查进程状态并 `tail` 结果文件，匹配到 `Keys` 三元组即成功；失败/超时返回最后输出。
+- **即时诊断（Sprint 41）**：不空转到超时——bkcrack 输出含 `not enough`/`too short`（已知明文不足 ≥8 连续字节）或 `match`/`data error`/`no match`（明文不匹配或 offset 错误）时立即返回带引导的错误信息：读生成脚本确认明文、flag.txt 以 `CTF{` 开头用 `known_bytes='4354467b'`、随机数据条目（如 junk.dat）不是有效已知明文、offset 通常为 12。
+- 找到 keys 后自动解压目标条目（`extract=true`）到 `output_dir`。
+
+### 13.15 观测真实性层（Sprint 38.5，H1/H2/H3）
+
+推理质量上限 = 观测质量。观测失真 → 决策必错（与模型强弱无关）。针对"LLM 自造过滤管道吞掉关键响应导致系统性误判"（如 `curl -s | grep -E 'HTTP|Location'` 在无匹配时退出码 1 → observation 只剩命令回显 → 误判攻击失败放弃），增加三模块：
+
+- **H1 命令模板库**（`prompts.py` `OBSERVATION_SAFETY` + `WEB_OBSERVATION_TEMPLATES` + `_inject_observation_safety`）：按题型/场景预置"经过验证、不过度过滤"的探测命令模板（web 探测用 `curl -i -s` 带响应头 / `curl -s -w '%{http_code} %{redirect_url}'` 结构化输出；grep 过滤改为先存文件再 grep）；注入 system prompt（通用段所有题型，web 额外加探测模板），让 LLM 默认用模板而非自己造命令。
+- **H2 输出保底协议**（`ssh_tool.py`）：失败命令必有结构化保底输出；检测到"过滤管道 + 失败 + 无输出"时，对**只读网络探测**（curl/wget/nc 且无 -d/-X POST 等写操作）自动重跑剥离过滤管道后的原始命令（`<raw> 2>&1 | head -c 3000`，timeout 30s），把真实响应直接带进 observation（不依赖 LLM 是否会听提示）；写操作/非网络命令不重跑（防副作用）。
+- **H3 观测规范器**：检测失真模式并提示纠正——①过滤管道吞输出（`ssh_tool.py` 失败路径注入提示"重跑不带过滤管道的原始命令，不要基于当前空输出下结论"）②302/301 未看 Location 头（web 方法论）③`curl -s` 隐藏响应头误判。
+
+验证：web-under-construction 第四轮（grep 误判 HPP 失败）→ 第五轮观测真实性层生效后重新解出（74 步，同题重跑稳定性 2/3）。
 
 ## 14. LLM 路由与容错
 
@@ -1601,6 +1656,17 @@ WING-Goose（2026-08）起 `LLM_PROVIDER=go`（默认）时：**只走 go 套餐
 - **第二级（应对限流/持续故障）**：30 秒间隔慢速重试——限流需要冷却时间，过快重试触发更严格限流。
 - 策略优先级：先 5s×3 快重试，全部失败转 30s 慢重试；仍失败则跳过本步继续（不阻塞主循环）。
 - 与 §14.2 动态 provider 健康状态协同：结合 provider 跳过期（120s）与重试计数，避免对反复失败的 provider 死等。
+
+### 14.8 分层 LLM 覆盖（Sprint 39，2026-08-14）
+
+三层架构（总指挥 / 战略层巡查 / 战术层主循环）默认共用同一个全局路由（`LLM_PROVIDER` 决定 provider），但允许**按层独立指定 provider[:model]**，用于成本/质量分层策略（如总指挥与战略层用更强的官方 pro 做方向判断，战术层保持 go flash 快响应）。
+
+- **配置**：`LAYER_LLM_MAP` 环境变量，逗号分隔 `layer=provider[:model]`；layer ∈ `commander/strategy/tactic`，provider ∈ `zen/go/fallback/pro`；model 可省略（用该 provider 的 settings 默认模型）。
+- **运行参数覆盖**：`python -m ctf_agent.solve --task-file task.json --layer-llm strategy=pro`（可多次，同名覆盖 env 值）。
+- **实现**：`RoutedLLMClient(settings, layer=...)` + `with_layer()` 浅拷贝绑定 layer + `_layer_override()` 解析 map + `_call_single_provider()` 忠实执行指定 provider（**不参与降级链**——层指定 pro 就只调 pro，不会悄悄降级 flash 改变成本/质量，保证行为可预期）。
+- **单次调用总预算**：`_CALL_TOTAL_BUDGET=120s` wall-clock 包住整条路由链（zen→go→fallback→pro + 5s×3 快重试 + 30s×5 慢重试最坏 400s+），超时直接抛 `TimeoutError`（react.py 捕获走"跳过本步"路径，不阻塞整题）——修复 16 路"LLM 慢速卡死 300s"问题。
+- **官方 pro 思考模式实测**：pro 的 thinking 模式（high/max）当前服务端"思考不收敛"——输出 100% reasoning_content 且 content 为空、撞满 max_tokens（55-135s/次），与社区 8/13 报告一致；`_call_single_provider` 对 pro 层强制 `reasoning_effort="none"`（9s/次有 content）。
+- 未配置 `LAYER_LLM_MAP` 且不传 `--layer-llm` 时，所有层完全跟随全局路由（与旧行为一致，零配置零影响）。
 
 ---
 
@@ -1731,7 +1797,7 @@ WING-Corvus/
 
 - Python ≥3.10；
 - 依赖：openai>=1.40 / httpx>=0.27 / python-dotenv>=1.0 / pydantic>=2.6 / pydantic-settings>=2.2 / rich>=13.7（docker 后端额外 docker>=7.0）；
-- 执行层二选一：Docker Desktop（默认，DOCKER_ENABLED=true）+ wing-goose:v4 镜像；或 Kali SSH（KALI_ENABLED=true 时启用）；
+- 执行层二选一：Docker Desktop（默认，DOCKER_ENABLED=true）+ wing-goose:v2 镜像；或 Kali SSH（KALI_ENABLED=true 时启用）；
 - LLM API：至少配置 go 套餐（推荐）或 zen/官方 flash。
 
 ### 18.2 安装步骤
@@ -1744,7 +1810,7 @@ pip install -e ".[docker]"          # 或 pip install -e .（无 docker 后端�
 cp .env.example .env                # 编辑 .env 填写 API Key 等
 
 # 3. （可选）构建 Docker 镜像
-docker build -f scripts/docker_test/Dockerfile.wing-goose -t wing-goose:v4 .
+docker build -f scripts/docker_test/Dockerfile.wing-goose -t wing-goose:v2 .
 
 # 4. 冒烟验证（可选）
 python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.config import get_settings; print(RoutedLLMClient(get_settings()).smoke_test())"
@@ -1814,7 +1880,7 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
    ```
 3. **Docker 执行层（推荐默认）**：
    - 安装并启动 Docker Desktop；
-   - 准备 `wing-goose:v4` 镜像（若 `DOCKER_BUILD_ON_MISSING=true` 会自动构建；否则手动构建或改用已有镜像）。
+   - 准备 `wing-goose:v2` 镜像（若 `DOCKER_BUILD_ON_MISSING=true` 会自动构建；否则手动构建或改用发布镜像 `ghcr.io/cimen101/wing-docker:v6.2`）。
 4. **LLM API**：
    - 推荐：Opencode go 套餐（`GO_API_KEY` + `GO_BASE_URL=https://opencode.ai/zen/go/v1`），国内部署直连快且稳定；
    - 备选：zen 免费层 / 官方 deepseek flash（FALLBACK_*）；
@@ -1842,6 +1908,16 @@ python -c "from ctf_agent.llm.routed import RoutedLLMClient; from ctf_agent.conf
 | `FALLBACK_API_KEY` / `FALLBACK_BASE_URL` / `FALLBACK_MODEL` | 空 / `https://api.deepseek.com/v1` / `deepseek-v4-flash` | 官方 flash 兜底 |
 | `LLM_MAX_RETRIES` | 2 | 每次 provider 失败后重试次数 |
 | `LLM_PROVIDER` | `go` | **模型路由模式**：`go`=只走 go 套餐（国内部署直连快、冲榜稳定）；`auto`=zen→go→官方→pro 三级降级（调试期保留） |
+| `LAYER_LLM_MAP` | 空 | **分层 LLM 覆盖（Sprint 39）**：`layer=provider[:model]` 逗号分隔，layer ∈ commander/strategy/tactic；空=全部跟随全局路由（见 §14.8） |
+| `PRO_API_KEY` / `PRO_BASE_URL` / `PRO_MODEL` | 空 / `https://api.deepseek.com/v1` / `deepseek-v4-pro` | 官方 pro 层（分层覆盖用）；**必须 none 思考档**（high/max 服务端思考不收敛） |
+
+#### 多模态视觉识别（vision_analyze）
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `VISION_API_KEY` | 空 | **必填**（Sprint 41 起）：vision_analyze 工具（图片/视频/音频理解）的 API key，经环境变量注入容器脚本，不硬编码 |
+| `VISION_API_URL` | `https://token-plan-cn.xiaomimimo.com/v1/chat/completions` | 多模态 API 端点（可覆盖） |
+| `VISION_API_MODEL` | `mimo-v2.5` | 多模态模型名（可覆盖） |
 
 #### 思考模式
 
@@ -1969,7 +2045,7 @@ task JSON 示例：
 
 ### 20.5 Docker 执行链
 
-1. `DOCKER_ENABLED=true`（默认）：`solve.py` 构造 `DockerClient`（镜像 wing-goose:v4，容器 `wing-goose-<agent_id>`，工作目录 /challenge）。
+1. `DOCKER_ENABLED=true`（默认）：`solve.py` 构造 `DockerClient`（镜像 wing-goose:v2，容器 `wing-goose-<agent_id>`，工作目录 /challenge）。
 2. 附件挂载：宿主附件目录 → 容器 `/challenge/workspace`；同题共享目录 → 容器 `/shared`。
 3. 工具层：docker_exec / docker_python / docker_upload 优先；daemon 不可用自动降级 ssh（若 KALI_ENABLED=true 且 Kali 可达）。
 4. 资源配额：按 DOCKER_CPU_PROFILE 限制容器 CPU/内存；`DOCKER_MAX_CONTAINERS` 控制并发。
@@ -2071,9 +2147,135 @@ Get-Content data/bus/<challenge_id>.jsonl
 
 ---
 
-## 21. 常见问题排查（补充）
+## 21. 外部系统接入指南（开放接口）
 
-### 21.1 已收录问题外的场景
+### 21.1 设计思想：为什么采用"子进程 + 参数传递 + JSONL 协议"
+
+WING-Corvus 的解题核心（`ctf_agent` 包）对外不暴露内部对象，而是采用**面向对象中封装**的思路：把一次完整的求解过程封装成一个可独立启动的**子进程入口**（`ctf_agent.solve`），外部系统通过**参数传递**（task JSON 文件）描述"要解什么题"，通过**标准输入/输出上的结构化 JSONL 协议**交换信息，完全不需要 import 内部类、修改源码或了解内部实现。
+
+这种设计带来的优势：
+
+1. **即插即用（低耦合）**：任何语言/任何框架（Python / Node / Go / 自动化平台 / 评测系统）都可以接入——只需启动一个子进程、写一个 JSON 文件、读标准输出、写标准输入，无需绑定特定语言运行时。
+2. **进程隔离（故障不扩散）**：解题器与调用方各自独立进程，LLM 挂起、工具阻塞、内存膨胀、硬超时都通过 kill 进程树解决，不会拖垮宿主应用；调用方崩溃也不会污染解题状态。
+3. **协议即契约（稳定接口）**：JSONL 行协议（`start/log/step/heartbeat/submission/result`）是稳定契约，内部架构如何演进（加模块、换模型、升级记忆层）都不影响外部接入。
+4. **信息交换显式化**：所有交互数据（题面参数、每步轨迹、提交请求、提交反馈、心跳、停止信号）都有明确的行类型与字段定义，便于日志、监控、复现与二次开发。
+5. **面向对象思想的落地**：`solve.py` 是"解题器"对象对外的唯一公开方法签名，`AgentClient` 是"调用客户端"对象（封装子进程管理 + 协议解析 + 双向通信），`SwarmCoordinator` 是"多路编排器"对象——外部系统只需与这三个"公开方法"交互，如同调用黑盒对象的方法。
+6. **可组合性**：单路子进程是基本单元，swarm 并行、总指挥协作、跨进程共享总线（FileBus）都是在其上组合出的更高层能力，外部系统可以按需使用任意层级。
+
+### 21.2 接入路径总览
+
+| 层级 | 入口 | 适用场景 | 复杂度 |
+|------|------|----------|--------|
+| L1 原始协议 | `python -u -m ctf_agent.solve --task-file <task.json>` | 任何语言的接入方，自己解析 JSONL、自己管理子进程 | 中 |
+| L2 客户端封装 | `AgentClient`（`ctf_agent/client.py`） | Python 接入方，回调式接收事件，自动处理子进程与协议 | 低 |
+| L3 多路编排 | `SwarmCoordinator`（`ctf_agent/swarm.py`） | 需要三风格并行 / 总指挥协作小队的 Python 接入方 | 低 |
+| L4 跨进程总线 | `FileBus`（`ctf_agent/bus/file_bus.py`） | 需要与解题器共享线索 / 查看汇报与指令流 | 可选 |
+
+### 21.3 任务输入：task JSON（参数详解）
+
+调用方把一道题的全部信息写成一个 JSON 文件，通过 `--task-file` 传给 `solve.py`：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `challenge_id` | str | 是 | 题目 ID（用于容器命名、总线键、日志归属） |
+| `title` | str | 否 | 题目名 |
+| `desc` | str | 是 | 任务描述（题面 + 附件路径 + 靶机 URL + 规则） |
+| `type` | str | 是 | 题型（web/pwn/crypto/reverse/misc/forensics/osint）；`start` 行输出字段名固定为 `challenge_type` |
+| `difficulty` | str | 是 | 难度（easy/medium/hard），驱动自适应步数/思考强度 |
+| `max_steps` | int | 否 | 步数上限（0=自适应，由 AdaptiveBreaker 按题型+难度计算） |
+| `max_seconds` | float | 否 | 熔断时间（秒，默认 1800） |
+| `max_submissions` | int | 否 | 单轮最大提交次数（>1 启用多次提交协议；1=单次提交） |
+| `style` | str | 否 | 解题风格（conservative/aggressive/innovative），并行场景每路不同 |
+| `retry_hint` | str | 否 | 重试提示（非空时追加到题面，引导重新分析不重复错误） |
+| `force_max_thinking` | bool | 否 | 强制 max 思考强度（重试场景） |
+| `annex_dir` | str | 否 | 附件宿主目录（挂载到容器 `/challenge/workspace`） |
+| `env` | dict | 否 | 容器创建时注入的环境变量（如 `FLAG=xxx`，避免 flag 文件泄露） |
+| `reset_container` | bool | 否 | 同题重做强制全新环境 |
+| `bus_dir` | str | 否 | 跨进程总线目录（启用总线/共享线索/总指挥协作时需要） |
+| `bus_challenge_id` | str | 否 | 总线键（同题多路共用同一 key；默认取 challenge_id） |
+| `commander_enabled` | bool | 否 | 总指挥（Commander）开关（swarm 领题时注入；需 `SWARM_COMMANDER_ENABLED=true`） |
+
+### 21.4 标准输出：JSONL 协议（解题器 → 调用方）
+
+`stdout` 只输出 JSON Lines（每行一个 JSON 对象），第三方库的 `print()` 会被包装成 `log` 行，保证协议不被污染。行类型：
+
+| type | 关键字段 | 时机/含义 |
+|------|----------|-----------|
+| `start` | `protocol_version` / `challenge_id` / `challenge_type` / `difficulty` / `max_steps` / `max_seconds` / `max_submissions` / `model` | 引擎构造成功后输出一次 |
+| `log` | `level`（INFO/WARN/ERROR/RESULT/RAW）/ `message` | 任意时刻的日志 |
+| `step` | `step_no` / `thought` / `action` / `action_input` / `observation` / `is_error` / `is_final` / `final_answer` / `error_msg` / `timestamp` | 每步 Thought-Action-Observation |
+| `heartbeat` | `elapsed` / `step` / `phase` | 每 15s 一次（区分"卡住"与"正在思考"） |
+| `coordinator` | `step_no` / `should_intervene` / `priority` / `reason` / `guidance` / `extend_steps` / `detected_issues` / `forbidden_actions` / `reflection` / `belief_state` | 每次巡查后（可观测战略层行为） |
+| `submission` | `flag` | agent 请求提交 flag，等待调用方在 stdin 回复 |
+| `result` | `success` / `flag` / `final_answer` / `fail_reason` / `steps` / `elapsed` / `tokens` / `model` | 最终结果（始终输出，成功/失败皆然） |
+
+### 21.5 标准输入：stdin 控制协议（调用方 → 解题器）
+
+调用方通过 stdin 写入 JSONL：
+
+| 消息 | 字段 | 含义 |
+|------|------|------|
+| 提交反馈 | `{"correct": bool, "feedback": "..."}` | 回复 `submission` 行：flag 是否正确 + 反馈文本（agent 会在 60s 内收到，超时自动失败） |
+| 停止信号 | `{"control": "stop"}` | 请求停止（agent 当前步完成后退出） |
+
+### 21.6 高层封装：AgentClient 与 SwarmCoordinator
+
+**L2 AgentClient**（`ctf_agent/client.py`）——封装子进程启动、JSONL 解析、stdin 双向通信：
+
+```python
+from ctf_agent.client import AgentClient, AgentCallbacks
+
+def on_submission(flag: str) -> tuple[bool, str]:
+    # 平台真实提交：返回 (is_correct, feedback)
+    return platform.submit(flag), ""
+
+cb = AgentCallbacks(on_step=lambda s: print("step", s["step_no"], s["action"]),
+                    on_submission=on_submission,
+                    on_result=lambda r: print("result", r))
+res = AgentClient(project_root=".").solve("task.json", callbacks=cb, max_seconds=1500)
+print(res.success, res.flag, res.fail_reason)
+```
+
+**L3 SwarmCoordinator**（`ctf_agent/swarm.py`）——同题多风格并行 + 总指挥协作小队：
+
+```python
+from ctf_agent.swarm import SwarmCoordinator
+
+sw = SwarmCoordinator(project_root=".", verify_flag=lambda f: (f == EXPECTED, "ok"))
+res = sw.run(task=task, styles=["conservative", "aggressive", "innovative"],
+             max_seconds=1200, on_commander=lambda lvl, msg: print(lvl, msg))
+print(f"solved={res.solved} flag={res.flag} winner={res.winner_style}")
+```
+
+`verify_flag` 回调职责约定（设计如此）：它是**平台/确证性校验**（如真实提交），不是"防幻觉"（防幻觉已由解题器内部 Flag 验证系统兜底）。只有存在确凿反证时才返回 False；无法判定时倾向返回 True，否则会误伤已真实解出的 flag、带偏 agent 并导致兄弟 kill 不触发。
+
+### 21.7 跨进程协作：FileBus 消息总线（L4）
+
+多路解题器通过 `bus_dir` 指定的目录共享一个跨进程 JSONL 总线，消息类型：
+
+| kind | 方向 | 用途 |
+|------|------|------|
+| `report` | 战略层 → 总指挥 | 汇报（clue/dead_end/question/progress/recon_done/verified），只含 FACT/LIKELY |
+| `directive` | 总指挥 → 战略层 | 指令（含 phase、MUST/SHOULD 优先级、任务契约 task_no） |
+| `finding` | 兄弟 ↔ 兄弟 | 高置信度线索分享（question/answer 双向提问回答） |
+| `node_verdict` | 兄弟 ↔ 兄弟 | P2 证据树已确认结论共享（仅 status=confirmed 可发布） |
+
+调用方如需观察协作过程，可直接读取 `<bus_dir>/<challenge_id>.jsonl`；如要实现自定义协作逻辑，可 import `FileBus`（`post_report` / `check_reports` / `post_directive` / `check_directives` / `post_finding` / `check_findings` / `post_node_verdict` / `check_node_verdicts`）。
+
+### 21.8 接入注意事项
+
+1. **必须 `-u`（unbuffered）**：`python -u -m ctf_agent.solve`，否则 stdout 无实时性；协议本身也会 `reconfigure(line_buffering=True)` 兜底。
+2. **调用方负责硬超时**：`solve.py` 不设内部超时线程（设计如此）——子进程模型下由调用方在 `max_seconds` 后 kill 进程树（Windows 用 `taskkill /F /T`，否则 docker/ssh 孙进程会持有 stdout 管道导致 readline 不返回）。
+3. **stdout 只读协议**：所有调试信息走 `log` 行；调用方不应把 stdout 当作人类日志。
+4. **工作目录**：子进程应在 `ctf_agent` 包所在项目根目录下运行（`AgentClient` 会自动设置 `cwd`）。
+5. **多次提交**：`max_submissions>1` 时 agent 才会在每次候选 flag 时输出 `submission` 行等待反馈；`=1` 时直接输出 `result`。
+6. **环境变量**：LLM key、Docker 开关等均通过 `.env` 配置（见 §20.2），调用方无需透传密钥；如需要可注入环境变量覆盖。
+
+---
+
+## 22. 常见问题排查（补充）
+
+### 22.1 已收录问题外的场景
 
 | 现象 | 可能原因 | 解决 |
 |------|----------|------|
@@ -2098,7 +2300,7 @@ Get-Content data/bus/<challenge_id>.jsonl
 | 稳定性 | provider 动态跳过期 | 中途故障自动跳过 120s，恢复自动重试，避免每次死等 |
 | 稳定性 | max_format_errors=5 | 并发抢 API 时输出质量波动的容错 |
 
-### 21.3 多 agent 并发资源预算
+### 22.3 多 agent 并发资源预算
 
 - 每路 agent 一个 Docker 容器（wing-goose-<id>），资源按 DOCKER_CPU_PROFILE 配额；
 - 3 路并行时建议：normal profile（2核/2G ×3）+ 预留 0.25 CPU/0.25 RAM 给宿主 OS/Docker Desktop；
@@ -2179,7 +2381,7 @@ Get-Content data/bus/<challenge_id>.jsonl
 | `ReActResult` / `ReActStep` | - | 结果/步骤数据结构 |
 | `SwarmResult` / `SwarmAgentResult` | `by_style` | swarm 汇总结果 |
 
-### 22.2 消息字段全览（附录 B）
+### 23.2 消息字段全览（附录 B）
 
 #### report（战略层 → 总指挥，kind=report）
 
@@ -2324,7 +2526,7 @@ Get-Content data/bus/<challenge_id>.jsonl
 
 本文档基于 WING-Corvus 源码逐行审计编写，覆盖全部新增能力（总指挥、战略层协作、多阶段协调、Flag 验证、总线协议、解析容错等）及相对 WING-Goose 的版本演进。如源码后续更新，请以代码为准并同步本文档。
 
-### 22.7 升级历程与迭代记录
+### 23.7 升级历程与迭代记录
 
 #### 大版本谱系
 
@@ -2351,7 +2553,10 @@ WING-Corvus（渡鸦）── 协作小队（当前最新版）
 | 37 | FlagVerifier 证据链升级（reverse 提取场景） | `_find_all_sources` 四级证据形态：完整明文 / 编码变体（hex/空格hex/十进制字节列表/0x 列表，覆盖 objdump/xxd 提取）/ core 前 8 字符 / core 分段覆盖（拼接式 flag）；`_is_program_verify` 程序验证豁免（echo flag \| wine + Correct! 不再误判自导自演）；`_rejected_flags` 改软锁（有新证据即解除拉黑，破解"先误拒后永久拦截"死锁）；`_split_core` 滑窗分段覆盖。验证：ida-reverse-course CH4（maze）从三路 1207s 超时 → conservative 241s 解出 |
 | 37.1 | 已解出未提交检测 | `_check_solved_not_submitted` L1 规则级检测：完整 flag 候选 + 验证信号 + 无提交意图 + ≥2 步提取工具 → 双分支干预（已验证→MUST 强制提交；未验证→引导运行程序验证或直接提交试错，解释 movabs 边界字节重叠如 junnk）。验证：CH8（junkcode）从三路 1207s 超时 → conservative 650.9s 解出 |
 | 38 | MUST 强制跳转 | MUST 指令被连续忽略 ≥2 步时强制跳转：`_must_ignore_count` 计数器追踪连续忽略步数，超阈值触发 `[FORCE]` 标记强制干预，防止总指挥/战略层 MUST 指令被 agent 空转忽略 |
+| 38.1 | 证据树共享（P2 漏洞确认） | `ctf_agent/evidence/__init__.py` 证据决策二叉树：内部节点=二元问题（verify_method/expected_yes/expected_no/confirm_action）、叶子=假设、根到叶=证据链；节点答案须经确认协议（tentative→confirmed）；共享协议 `node_verdict` 仅发布 confirmed 结论（100% 正确才共享）；P1 任务带 deliverables 验收清单 + 证据树生长缺信息时 `report_need_recon` 反向驱动侦查 |
+| 39 | 分层 LLM 覆盖 | `LAYER_LLM_MAP` 环境变量 + `--layer-llm LAYER=PROVIDER[:MODEL]` 运行参数，按层（commander/strategy/tactic）独立指定 provider/model；`RoutedLLMClient(layer=...)` + `with_layer()`/`_layer_override()` 实现；总预算 120s；官方 pro 端点强制 reasoning_effort=none |
 | 40 | 巡查工具使用检测增强 | 新增专用工具过度使用检测：`ssh_exec` 占比 >60% 时警告改用专用工具（binary_analyze/binary_deep_analyze/angr）；`vision_analyze` 连续 ≥3 次时警告其只能分析图片不能分析二进制/代码；叠加原有同工具重复 ≥5 次（参数不同）思路固化软线索 |
 | 40.5 | 结构化知识库（structured/） | `data/knowledge/structured/` 新增静态确定性知识 JSON：`algorithm_fingerprints.json`（AES S-box / TEA delta / RSA / ECC 指纹）、`architecture_guides.json`（MAME/pyboy/多架构 VM 指南）、`environment_solutions.json`（GLIBCXX 缺失等环境依赖解法）；`kb.py` 新增 `structured()` 查询接口（按 challenge_type/任务关键词匹配注入），解决算法误判（Paillier↔RSA）与环境依赖断链 |
+| 41 | 侦查饱和检测 + 命令/脚本去重 + bkcrack 增强 | P2 侦查饱和检测（`_check_recon_saturation`：步数≥14 + 最近窗口内执行类≥8 且纯侦查命令≥6 且零产出型动作 → `[MUST]` 强制写脚本/攻击）；战术层只读侦查命令去重缓存（`_check_recon_cmd_repeat`/`_record_recon_cmd`，成功执行后才登记）+ 脚本重复提示（`_check_script_dup`，前 60 字符归一化重复 ≥3 次）；bkcrack 工具新增 known_bytes/known_offset（`-x` 模式）+ Data error 即时诊断（known 明文不足/不匹配不空转到超时）。复盘来源：rev-zermatt 三路 25-36 步全只读侦查、aggressive 同一脚本调试 6 次 |
 
 > 机制细节见对应章节：12.5 智能压缩、12.6 内置知识库、12.10 知识库多层体系、13.4 深度逆向分析工具（含 crypto/stat 模式）、13.9 LWE 工具、13.10 合规搜索；迭代验证记录见 `dev-notes/`。

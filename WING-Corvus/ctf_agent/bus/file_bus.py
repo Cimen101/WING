@@ -206,7 +206,8 @@ class FileBus:
     def post_directive(self, agent_id: str, task_id: str, content: str,
                        task_no: int = 0, priority: str = "SHOULD",
                        reason: str = "", phase: str = "",
-                       forbidden: list[str] | None = None) -> int:
+                       forbidden: list[str] | None = None,
+                       deliverables: list[str] | None = None) -> int:
         """总指挥向指定战略层下发方向指令. 返回 seq.
 
         Args:
@@ -217,6 +218,8 @@ class FileBus:
             phase: Sprint 36.2 当前解题阶段 (P1/P2/P3/P4, 供战略层感知阶段注入任务)
             forbidden: Sprint 36.5.2 任务禁忌列表 (针对任务+当前阶段的约束,
                        战略层合并进本地禁忌拦截; 单路先行时禁忌"稍微放松")
+            deliverables: Sprint 38 (Phase B, P1 任务驱动) 侦查任务产出物清单 —
+                       任务验收标准, 战术层按此逐项汇报完成情况
         """
         if not content or not content.strip():
             raise ValueError("content 不能为空")
@@ -226,6 +229,7 @@ class FileBus:
             "priority": priority, "task_no": int(task_no or 0),
             "reason": reason[:300], "phase": str(phase or ""),
             "forbidden": [str(f)[:200] for f in (forbidden or [])][:8],
+            "deliverables": [str(d)[:300] for d in (deliverables or [])][:5],
         })
 
     def check_directives(self, task_id: str, agent_id: str | None = None,
@@ -238,6 +242,38 @@ class FileBus:
         if agent_id:
             msgs = [m for m in msgs if m.get("agent") == agent_id]
         return msgs, new_cursor
+
+    # ---------- Sprint 38 (Phase C, P2 证据树): node_verdict 共享 ----------
+    # 共享粒度 = 一条一条"已验证节点的是/否结论" (仅 confirmed, 100% 正确).
+    # 接收方据此对自家树的类似节点去重 (L1 精确键 / L2 语义 / L3 无匹配独立验证).
+
+    def post_node_verdict(self, task_id: str, verdict: dict) -> int:
+        """发布一条已确认节点结论 (node_verdict). 返回 seq.
+
+        ⚠️ 只允许发布 status=confirmed 的 verdict — 未确认节点 (pending/
+        tentative/unknown) 一律不共享 (设计约束 2026-08-13: 共享必须 100% 正确).
+        """
+        if verdict.get("status") != "confirmed":
+            return 0  # 静默拒绝 (不发布)
+        node_question = str(verdict.get("node_question") or "")[:300]
+        if not node_question.strip():
+            return 0
+        return self._append_msg(self._path(task_id), {
+            "ts": time.time(), "task_id": task_id, "kind": "node_verdict",
+            "node_id": str(verdict.get("node_id") or "")[:50],
+            "node_question": node_question,
+            "answer": bool(verdict.get("answer")),
+            "status": "confirmed",
+            "evidence": str(verdict.get("evidence") or "")[:500],
+            "confirm_action": str(verdict.get("confirm_action") or "")[:200],
+            "verified_by": str(verdict.get("verified_by") or "")[:50],
+            "target": str(verdict.get("target") or "")[:120],
+        })
+
+    def check_node_verdicts(self, task_id: str,
+                            cursor: int = 0) -> tuple[list[dict], int]:
+        """战术层消费: 拉取该题 kind=node_verdict 的新消息 (升序)."""
+        return self._read_kind(task_id, "node_verdict", cursor)
 
     def post_finding(self, agent_id: str, task_id: str, content: str,
                      kind: str = "finding", reply_to: int = 0) -> int:

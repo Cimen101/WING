@@ -2,7 +2,7 @@
 
 管线: extract → verdict → refine → merge → compress → persist
 
-核心纪律 (用户规则):
+核心纪律 (设计规则):
 - **不管成功/失败都要整理**: 成功 → playbook (正向套路); 失败 → pitfall (避坑)
 - **意外退出也要整理完才能退出**: 每条轨迹用 try/finally 兜底, 异常时先把
   轨迹引用/部分产物落盘到 curator_log.jsonl, 不丢失已提取内容
@@ -173,7 +173,7 @@ def _build_playbook(steps: list[dict], tool_chain: list[str], obs: list[str]) ->
     return "\n".join(lines)
 
 
-# ============ Sprint 36.5: LLM 分阶段提炼 (用户规则: 独立 LLM 分析整理) ============
+# ============ Sprint 36.5: LLM 分阶段提炼 (设计规则: 独立 LLM 分析整理) ============
 
 def _step_phase(s: dict) -> str:
     """按工具/观测特征给单步定阶段 (粗略分组, 供 LLM 提炼时参考).
@@ -230,7 +230,7 @@ def _llm_refine(
     verdict: str,
     llm: Any,
 ) -> str:
-    """LLM 分阶段提炼 playbook/pitfall (用户规则: 需要独立 LLM 分析整理).
+    """LLM 分阶段提炼 playbook/pitfall (设计规则: 需要独立 LLM 分析整理).
 
     无 LLM 时回退到模板拼接 (_build_playbook/_build_pitfall), 保证离线可用.
     """
@@ -473,7 +473,7 @@ def curate_trace(trace_path: Path, kb: KnowledgeBase, log_path: Path, llm: Any =
         record["style"] = style
         record["tool_chain"] = tool_chain
 
-        # 3. refine: 优先 LLM 分阶段提炼 (用户规则: 独立 LLM 分析整理), 无 LLM 回退模板
+        # 3. refine: 优先 LLM 分阶段提炼 (设计规则: 独立 LLM 分析整理), 无 LLM 回退模板
         refined = _llm_refine(steps, tool_chain, ctype, verdict, llm)
         if not refined:
             obs = _key_observations(steps)

@@ -2,7 +2,7 @@
 
 将 main.py 的命令行参数转换为 ReAct 引擎任务并执行。
 通过依赖注入 ReActEngine，使端到端流程可在测试中用 mock 验证
-（依据用户偏好：不为测试修改生产 API，而是让接口本身可测试）。
+（设计约定：不为测试修改生产 API，而是让接口本身可测试）。
 """
 
 from __future__ import annotations

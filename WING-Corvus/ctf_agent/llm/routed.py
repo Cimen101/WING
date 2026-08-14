@@ -57,6 +57,11 @@ _CALL_WALLCLOCK = 45.0  # 单次 create 调用的硬总超时 (s), 覆盖 slow-d
 _GO_WALLCLOCK = 90.0    # WING-Goose (2026-08): go 分支专用硬超时 — thinking 长推理生成 45s+
                         # 很常见, 45s 硬超时 → 3 轮重试链白扔 ~139s (见 #2669 复盘);
                         # 放宽到 90s 让长思考一次成功. zen/fallback 仍用 45s 兜底不变.
+# Sprint 38 (test20 复盘): 单次 chat() 调用总预算 — 整条路由链 (zen→go→fallback→pro
+# + 快速重试 5s×3 + 慢速重试 30s×5) 最坏可达 400s+, 超过调用层"300s 无新 step 卡死
+# 判定" → 16 路卡死直接根因. 在 chat() 入口用 wall-clock 总预算包裹整条链,
+# 超时直接抛 TimeoutError (由 react.py 捕获走"跳过本步"路径, 不阻塞整题).
+_CALL_TOTAL_BUDGET = 120.0  # 单次 chat() 调用硬总预算 (s), 覆盖全部重试链
 
 
 def _call_with_wallclock(
@@ -98,8 +103,11 @@ class RoutedLLMClient:
         "pro_only": 直接使用 pro 模型 (跳过 zen/go/flash)
     """
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, layer: str = "") -> None:
         self.settings = settings or get_settings()
+        # Sprint 39 (2026-08-14): 分层 LLM 选择 — layer ∈ commander/strategy/tactic
+        # 由 settings.layer_llm_map 为该层指定 provider[:model], 空 = 跟随全局路由
+        self.layer = layer or ""
         self._zen_client: OpenAI | None = None
         self._go_client: OpenAI | None = None  # Sprint 33: Opencode go 付费层
         self._fallback_client: OpenAI | None = None
@@ -112,6 +120,93 @@ class RoutedLLMClient:
         # Sprint 32.8: 动态健康状态 — 每次调用的实时结果, 覆盖冒烟测试的一次性标记
         # {provider: {"fails": int(连续失败), "last_ts": float, "down_until": float}}
         self._provider_state: dict[str, dict[str, float | int]] = {}
+
+    # ── Sprint 39: 分层 LLM 覆盖 (per-layer provider/model) ──
+
+    def with_layer(self, layer: str) -> "RoutedLLMClient":
+        """返回绑定指定 layer 的浅拷贝客户端 (共享 settings, 独立 layer)."""
+        clone = RoutedLLMClient(settings=self.settings, layer=layer)
+        clone._provider_ok = self._provider_ok
+        return clone
+
+    def _layer_override(self) -> tuple[str, str] | None:
+        """解析 layer_llm_map 中本 layer 的 (provider, model) 覆盖; 无则 None."""
+        if not self.layer:
+            return None
+        raw = (self.settings.layer_llm_map or "").strip()
+        if not raw:
+            return None
+        for item in raw.split(","):
+            item = item.strip()
+            if not item or "=" not in item:
+                continue
+            k, v = item.split("=", 1)
+            if k.strip() != self.layer:
+                continue
+            v = v.strip()
+            if ":" in v:
+                provider, model = v.split(":", 1)
+                provider = provider.strip().lower()
+                model = model.strip()
+            else:
+                provider = v.strip().lower()
+                model = ""
+            if provider not in ("zen", "go", "fallback", "pro"):
+                return None
+            return provider, model
+        return None
+
+    def _call_single_provider(
+        self, provider: str, model: str, payload: dict[str, Any], timeout: float | None
+    ) -> ChatResult:
+        """按层覆盖直接调用指定 provider (忠实执行, 失败抛错, 不跨 provider 降级).
+
+        保证分层行为可预期: 层指定 pro 就只用 pro, 不会偷偷降级到 flash 改变成本/质量.
+        """
+        client = {
+            "zen": self._get_zen_client,
+            "go": self._get_go_client,
+            "fallback": self._get_fallback_client,
+            "pro": self._get_pro_client,
+        }.get(provider)
+        if client is None:
+            raise RuntimeError(f"未知 provider: {provider}")
+        c = client()
+        if c is None:
+            raise RuntimeError(f"provider 未配置: {provider}")
+        used_model = model or getattr(
+            self.settings, f"{provider}_model", ""
+        ) or getattr(self.settings, "fallback_model", "")
+        timeout = timeout if timeout is not None else _CALL_TOTAL_BUDGET
+        p = {**payload, "model": used_model, "timeout": timeout}
+        # Sprint 39 (实测结论 2026-08-14): 官方 pro 的 thinking 模式 (high/max)
+        # 当前服务端状态"思考不收敛" — 输出 100% reasoning_content, content 为空,
+        # 撞满 max_tokens 截断 (4000/8000 tok 均复现, 55-135s/次). 与社区 8/13
+        # 报道一致 (长流程提前收尾). 仅 none 档正常 (9s/次有 content).
+        # → 分层 pro 调用强制 none, 否则系统 LLM 调用必然超时无输出.
+        if provider == "pro" and p.get("reasoning_effort") not in (None, "none"):
+            p["reasoning_effort"] = "none"
+        last_exc: Exception | None = None
+        for attempt in range(self.settings.llm_max_retries + 1):
+            try:
+                resp = _call_with_wallclock(
+                    lambda p=p: c.chat.completions.create(**p), timeout=timeout
+                )
+                self._record_provider_ok(provider)
+                return _parse_response(resp, used_model)
+            except Exception as e:  # noqa: BLE001
+                last_exc = e
+                status_code = getattr(e, "status_code", None)
+                if status_code is not None and 500 <= status_code < 600:
+                    break
+                if attempt == self.settings.llm_max_retries:
+                    break
+                time.sleep(2)
+        self._record_provider_fail(provider)
+        raise RuntimeError(
+            f"分层 LLM 调用失败 (layer={self.layer}, provider={provider}, "
+            f"model={used_model}): {type(last_exc).__name__}: {last_exc}"
+        ) from last_exc
 
     # ── Sprint 32.8: 动态 provider 健康状态 ──
 
@@ -289,8 +384,8 @@ class RoutedLLMClient:
                 base_url=self.settings.go_base_url,
                 timeout=httpx.Timeout(timeout, connect=5, read=timeout),
                 # WING-Goose (2026-08): go 套餐已启用国内部署 → 必须直连国内 IP
-                # (禁系统代理), 响应快且稳定. #2664 复盘: 走 127.0.0.1:7890 代理
-                # 导致 go 请求 45s+ 超时, 每步 LLM 耗时 90s+, easy 题 12 分钟才解出.
+                # (禁系统代理), 响应快且稳定. 复盘: 走本地系统代理
+                # 导致 go 请求 45s+ 超时, 每步 LLM 耗时 90s+.
                 http_client=httpx.Client(proxy=None, trust_env=False,
                                          timeout=httpx.Timeout(timeout, connect=5, read=timeout)),
             )
@@ -591,21 +686,35 @@ class RoutedLLMClient:
         if extra:
             payload.update(extra)
 
-        # Sprint 19: pro_only 直接调用 pro (Sprint 26 deprecated)
-        if model_tier == "pro_only":
-            return self._call_pro(payload, timeout)
+        # Sprint 38: 单次 chat() 总预算 — 整条路由链 (zen→go→fallback→pro + 分级重试)
+        # 可能长达 400s+, 超过调用层 300s 卡死判定. 用 _call_with_wallclock 包裹
+        # 完整路由链: 预算内正常返回, 超时抛 TimeoutError (react.py 捕获走跳过本步).
+        budget = timeout if timeout is not None else _CALL_TOTAL_BUDGET
 
-        # Sprint 19: pro 模式先试 flash (含 zen), 失败后跳 pro (Sprint 26 deprecated)
-        if model_tier == "pro":
-            try:
-                return self._call_flash(payload, timeout)
-            except Exception:
-                # flash 异常 (含 5xx / 超时 / 推理失败), 降级到 pro
-                pass
-            return self._call_pro(payload, timeout)
+        def _route() -> ChatResult:
+            # Sprint 39 (2026-08-14): 分层 LLM 覆盖 — 层显式指定 provider 时
+            # 忠实执行 (不参与降级链, 保证成本/质量可预期). 无覆盖 → 走全局路由.
+            ov = self._layer_override()
+            if ov is not None:
+                return self._call_single_provider(ov[0], ov[1], payload, timeout)
 
-        # 默认: flash 模式
-        return self._call_flash(payload, timeout)
+            # Sprint 19: pro_only 直接调用 pro (Sprint 26 deprecated)
+            if model_tier == "pro_only":
+                return self._call_pro(payload, timeout)
+
+            # Sprint 19: pro 模式先试 flash (含 zen), 失败后跳 pro (Sprint 26 deprecated)
+            if model_tier == "pro":
+                try:
+                    return self._call_flash(payload, timeout)
+                except Exception:
+                    # flash 异常 (含 5xx / 超时 / 推理失败), 降级到 pro
+                    pass
+                return self._call_pro(payload, timeout)
+
+            # 默认: flash 模式
+            return self._call_flash(payload, timeout)
+
+        return _call_with_wallclock(_route, timeout=budget)
 
 
 __all__ = ["RoutedLLMClient"]

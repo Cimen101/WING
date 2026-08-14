@@ -522,6 +522,7 @@ class Coordinator:
         max_errors: int = 3,                # 连续 N 个错误步判定为停滞
         early_exit_steps: int = 20,         # 步数接近上限时触发 (倒数 N 步)
         execution_starvation_min_steps: int = 20,  # Sprint 36: 分析瘫痪检测启用步数 (前期信息收集合理)
+        recon_saturation_min_steps: int = 14,  # Sprint 41: P2 侦查饱和检测启用步数 (rev 复盘: 25-36 步全侦查)
         experience_library: Any = None,     # 经验库 (skill_library.json), 辅助禁忌判断
         knowledge_base: Any = None,         # WING KB: 四层知识库 (战略层参考)
         # Sprint 36 (WING-Corvus): 战略层能力 (默认关闭, 开启后行为才变化)
@@ -559,6 +560,7 @@ class Coordinator:
         self.max_errors = max_errors
         self.early_exit_steps = early_exit_steps
         self.execution_starvation_min_steps = execution_starvation_min_steps
+        self.recon_saturation_min_steps = recon_saturation_min_steps
         # 异常触发: 连续错误步计数
         self._consecutive_errors = 0
         self._last_check_step = 0
@@ -592,7 +594,7 @@ class Coordinator:
         self._pending_fired_step = 0   # 在途/待消费分析对应的发起步 (注入时声明来源步)
         self._last_fired_step = 0      # 最近一次发起巡查的步数 (首次/近上限门槛)
         self._last_injected_step = 0   # 最近一次注入结果的步数 (发起节奏基准: +N 步再巡查)
-        # 巡查间隔钳制在 5~10 步 (用户约束 2026-08-03: 避免整体过于频繁)
+        # 巡查间隔钳制在 5~10 步 (设计约束 2026-08-03: 避免整体过于频繁)
         self.check_interval = max(5, min(10, self.check_interval))
 
         # ── Sprint 36 (WING-Corvus): 战略层能力状态 ──
@@ -604,6 +606,12 @@ class Coordinator:
         self._task_no: int = int(contract.get("task_no") or 0)
         self._task_direction: str = str(contract.get("task") or "")
         self._task_priority: str = str(contract.get("priority") or "SHOULD")
+        # Sprint 38 (Phase B): 侦查任务产出物清单 (deliverables, 验收标准)
+        # + 完成跟踪 (下标集合). 战术层按此逐项汇报完成情况.
+        self._deliverables: list[str] = [
+            str(d).strip() for d in (contract.get("deliverables") or []) if str(d).strip()
+        ]
+        self._deliverables_done: set[int] = set()
         self._directive_cursor: int = 0      # directive 消费游标
         self._dead_end_switched: bool = False
         self._tool_unavailable: dict[str, int] = {}  # 工具连续不可用计数 (死路检测)
@@ -613,11 +621,26 @@ class Coordinator:
         # Sprint 36.5.2: 当前任务的禁忌 (随 directive 下发, 新任务覆盖旧任务禁忌;
         # 本地自增禁忌如死路/死循环签名不在此列, 保留)
         self._task_forbidden: list[str] = []
+        # Sprint 38 (S2): "找 flag 文件"陷阱已阻断标记 (防巡查重复报 + 已加禁忌)
+        self._flag_hunt_blocked: bool = False
+        # Sprint 38 (Phase C, P2 证据决策二叉树): 每路独立证据树 + verdict 消费
+        # - _evidence_tree: 本路证据二叉树 (根=风格预制+任务范围, 渐进生长)
+        # - _verdict_cursor: node_verdict 消费游标 (跨进程共享去重)
+        # - _verdict_since_ts: 上次消费时间戳 (避免重读)
+        self._evidence_tree: Any = None   # EvidenceTree 实例 (Phase C 激活后创建)
+        self._verdict_cursor: int = 0
+        self._verdict_bus: Any = None     # 共享 verdict 的总线 (bus 同源, 防止未启用)
+        self._node_verify_tasks: list[dict] = []  # 待下发验证任务队列
+        self._node_answers: list[dict] = []       # 待上报的节点结论队列
+        # Sprint 38 (Phase D, P3 攻击链驱动): 本路攻击链 (P3 阶段激活)
+        self._attack_chain: Any = None    # AttackChain 实例 (Phase D 激活后创建)
+        # 题型提示: 由 _challenge_type 属性提供 (analyze 调用时传入), 此处占位
+        self._challenge_type: str = ""
 
     def should_check(self, step_no: int, max_steps: int = 0, live_errors: int = -1) -> bool:
         """是否到了巡查发起时机 (Sprint 33 异步事件驱动版).
 
-        发起节奏 (用户 2026-08-03 约束: 上一次注入后 5 步, 整体不过频):
+        发起节奏 (设计约束 2026-08-03: 上一次注入后 5 步, 整体不过频):
         1. 队列空 (无在途分析 + 无未消费结果) — 堆积上限 1
         2. 首次巡查: 第 first_check 步 (默认 5, 2026-08-05 从 10 提前 — 简单题可能 <10 步解出)
         3. 常规: 上一次注入结果之后 check_interval 步 (默认 5) — 以注入时刻为基准,
@@ -734,14 +757,21 @@ class Coordinator:
     # ── Sprint 36 (WING-Corvus): 战略层能力 (与总指挥协作) ──
     # 任务契约 = 总指挥分配的方向性指引, 非强制枷锁; 遇明确死路可自动切换并事后汇报.
 
-    def set_task_contract(self, task_no: int, direction: str, priority: str = "SHOULD") -> None:
+    def set_task_contract(self, task_no: int, direction: str, priority: str = "SHOULD",
+                          deliverables: list[str] | None = None) -> None:
         """总指挥注入/更新任务契约 (领题分工或重定向).
 
         方向性指引, 非强制枷锁: 战略层执行时遇明确死路可自行切换+事后汇报.
+        Sprint 38 (Phase B): deliverables = 侦查任务产出物清单 (验收标准),
+        战术层按此逐项汇报完成情况 (P1 任务驱动).
         """
         self._task_no = int(task_no or 0)
         self._task_direction = str(direction or "")
         self._task_priority = str(priority or "SHOULD")
+        if deliverables is not None:
+            self._deliverables = [str(d).strip() for d in deliverables if str(d).strip()]
+        # 新任务契约 → 重置产出物完成跟踪
+        self._deliverables_done: set[int] = set()
 
     def report_to_commander(self, report_type: str = "clue", content: str = "",
                             level: str = "FACT") -> bool:
@@ -762,12 +792,13 @@ class Coordinator:
             return False
 
     def report_progress(self, findings: str, next_plan: str = "",
-                        stuck: bool = False) -> bool:
+                        stuck: bool = False, deliverables_status: str = "") -> bool:
         """Sprint 36.2: P1 侦查进度汇报 (每 5 步向总指挥汇报).
 
         内容含: 当前发现 / 下一步计划 / 是否卡死. 总指挥据此:
         - 判断该路侦查是否完成 (三路全部完成 → 整合全局情报 → P2)
         - 某路长时间无进展时介入调整
+        Sprint 38 (Phase B): deliverables_status = 产出物验收进度 (任务驱动验收).
         """
         if not self._commander_enabled:
             return False
@@ -775,6 +806,8 @@ class Coordinator:
         if next_plan:
             parts.append(f"下一步: {next_plan.strip()[:150]}")
         parts.append("是否卡死: " + ("是" if stuck else "否"))
+        if deliverables_status:
+            parts.append(deliverables_status[:80])
         return self.report_to_commander(
             report_type="progress", content=" | ".join(parts), level="FACT")
 
@@ -888,6 +921,8 @@ class Coordinator:
         - 每 5 步一次 (自上次汇报起 <5 步不重复)
         - 内容从最近轨迹提取: 当前发现 (最近 2 步 observation 精华) /
           下一步计划 (最近一步 thought 末尾) / 是否卡死 (连续错误 ≥ max_errors)
+        Sprint 38 (Phase B, P1 任务驱动): 汇报附带**产出物验收进度** —
+        deliverables 中哪些已完成 (依据最近观测自动判定), 总指挥据此验收任务.
         返回是否成功上报.
         """
         if not self._commander_enabled or self._current_phase != "P1":
@@ -903,6 +938,13 @@ class Coordinator:
             if obs and obs not in findings:
                 findings.append(obs[:120])
         findings_str = " / ".join(findings[-2:]) if findings else "继续侦查中"
+        # Sprint 38 (Phase B, S7 协作): 汇报附带**最近实际动作** (action 类型),
+        # 让总指挥看到该路真实在做什么 (而非只看到 observation 文本),
+        # 避免"三路始终未汇报"的盲区 — 总指挥据此判断侦查方向与卡住情况.
+        actions = [str(getattr(s, "action", "") or "").strip() for s in recent if getattr(s, "action", "")]
+        if actions:
+            act_str = "/".join(dict.fromkeys(actions))  # 去重保序
+            findings_str = f"[动作:{act_str}] {findings_str}"
         # 下一步计划: 最近一步 thought 末尾的计划意图 (截断防噪声)
         next_plan = ""
         if recent:
@@ -911,7 +953,244 @@ class Coordinator:
                 next_plan = thought[-80:]
         # 是否卡死: 连续错误步 ≥ max_errors (规则信号, 供总指挥判断)
         stuck = self._consecutive_errors >= self.max_errors
-        return self.report_progress(findings_str, next_plan, stuck)
+        # Sprint 38 (Phase B): 产出物验收进度 — 结合最近观测自动标记已完成项
+        deliv_status = self._update_deliverables_progress(recent)
+        return self.report_progress(findings_str, next_plan, stuck, deliverables_status=deliv_status)
+
+    def _update_deliverables_progress(self, recent: list[dict]) -> str:
+        """Sprint 38 (Phase B): 根据最近观测自动判定 deliverables 完成度.
+
+        启发式 (O(1), 无 LLM): 产出物文本与最近观测内容做关键词/包含匹配 —
+        观测中出现产出物关键词 (源码/文件/接口/运行/日志/符号/环境等) 即视为
+        该产出物有进展. 返回状态字符串供 P1 汇报携带 (如 "1/3 产出物完成").
+        """
+        if not self._deliverables:
+            return ""
+        obs_text = " ".join(
+            str(getattr(s, "observation", "") or "")[:200] for s in (recent or [])
+        ).lower()
+        for idx, d in enumerate(self._deliverables):
+            if idx in self._deliverables_done:
+                continue
+            # 产出物关键词提取 (取中文名词/英文技术词片段做包含匹配)
+            kws = [k for k in ("源码", "文件", "接口", "运行", "日志", "符号",
+                               "函数", "协议", "架构", "环境", "目录", "命令",
+                               "响应", "服务", "端口") if k.lower() in d.lower()]
+            if any(k.lower() in obs_text for k in kws):
+                self._deliverables_done.add(idx)
+        total = len(self._deliverables)
+        done = len(self._deliverables_done)
+        if done == 0:
+            return f"产出物 {total} 项未完成"
+        return f"产出物 {done}/{total} 已完成"
+
+    # ---------- Sprint 38 (Phase C, P2 证据决策二叉树) 集成 ----------
+
+    def init_evidence_tree(self, root_question: str = "") -> None:
+        """激活本路证据树 (P2 阶段由战略层创建).
+
+        root_question 为空时用风格化默认根问题 (渐进生长第一步).
+        """
+        try:
+            from ctf_agent.evidence import EvidenceTree
+            self._evidence_tree = EvidenceTree(
+                root_question=root_question or self._default_tree_root(),
+                owner_style=self.style,
+            )
+            # 共享 verdict 总线 = 本路总线 (与兄弟同源)
+            self._verdict_bus = self._bus
+        except Exception:  # noqa: BLE001 - 证据树不可用不影响主流程
+            self._evidence_tree = None
+
+    def _default_tree_root(self) -> str:
+        """风格化默认根问题 (初始构建的第一层)."""
+        base = {
+            "conservative": "漏洞是否存在于静态代码结构/逻辑中?",
+            "aggressive": "是否存在可直接探测/触发的交互入口?",
+            "innovative": "是否存在非常规/隐藏的输入面或线索?",
+        }
+        return base.get(self.style, "题目漏洞的主要入口是什么?")
+
+    def consume_verdicts(self) -> list[dict]:
+        """Sprint 38 (Phase C): 消费兄弟路已确认节点结论 (node_verdict) — 去重.
+
+        三级匹配:
+        L1 精确键 (问题文本完全一致) → 直接采纳到本路树 (标记 verified_by=兄弟)
+        L2 语义匹配 (关键词交集) → 采纳 (低置信则标记待复核)
+        L3 无匹配 → 仅记录 (不并入本路树, 防干扰)
+        返回新消费的 verdict 列表 (供调用方注入战术层提示).
+        """
+        if not self._verdict_bus or self._evidence_tree is None:
+            return []
+        try:
+            verdicts, new_cursor = self._verdict_bus.check_node_verdicts(
+                self._bus_challenge_id, cursor=self._verdict_cursor)
+            self._verdict_cursor = new_cursor
+        except Exception:  # noqa: BLE001
+            return []
+        if not verdicts:
+            return []
+        merged: list[dict] = []
+        tree = self._evidence_tree
+        for v in verdicts:
+            if v.get("verified_by") == self.style:
+                continue  # 自己发布的跳过
+            q = str(v.get("node_question") or "")
+            ans = bool(v.get("answer"))
+            # L1: 精确匹配本路树中 pending 节点
+            matched = False
+            for node in tree.nodes.values():
+                if node.status == "pending" and node.question.strip() == q.strip():
+                    node.answer = ans
+                    node.status = "confirmed"
+                    node.verified_by = str(v.get("verified_by") or "兄弟")
+                    node.evidence = str(v.get("evidence") or "")[:500]
+                    matched = True
+                    break
+            if matched:
+                merged.append(v)
+                continue
+            # L2: 语义近似 (关键词交集 ≥2)
+            q_kws = {w for w in q.replace("?", "").split() if len(w) > 1}
+            for node in tree.nodes.values():
+                if node.status != "pending":
+                    continue
+                n_kws = {w for w in node.question.replace("?", "").split() if len(w) > 1}
+                if q_kws and len(q_kws & n_kws) >= 2:
+                    node.answer = ans
+                    node.status = "confirmed"
+                    node.verified_by = f"{v.get('verified_by')}(语义匹配)"
+                    node.evidence = str(v.get("evidence") or "")[:500]
+                    matched = True
+                    break
+            if matched:
+                merged.append(v)
+            # L3: 无匹配 → 仅记录不并入 (防干扰)
+        return merged
+
+    def publish_verdicts(self) -> int:
+        """Sprint 38 (Phase C): 发布本路已确认节点结论 (仅 confirmed).
+
+        返回发布条数. 未确认节点一律不发布 (100% 正确共享约束).
+        """
+        if not self._verdict_bus or self._evidence_tree is None:
+            return 0
+        try:
+            tree = self._evidence_tree
+            published = 0
+            for node in tree.nodes.values():
+                if node.status != "confirmed" or node.answer is None:
+                    continue
+                v = node.to_verdict(self.style)
+                if v is None:
+                    continue
+                seq = self._verdict_bus.post_node_verdict(self._bus_challenge_id, v)
+                if seq:
+                    published += 1
+            return published
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def record_node_answer(self, node_id: str, answer: bool | None,
+                           evidence: str = "", confirm: bool = False) -> bool:
+        """Sprint 38 (Phase C): 战术层上报节点验证结果.
+
+        confirm=False → 置 tentative (初步观测, 不参与路径/不共享)
+        confirm=True  → 置 confirmed (✅ 参与路径 + 可共享)
+        """
+        if self._evidence_tree is None:
+            return False
+        try:
+            tree = self._evidence_tree
+            if node_id not in tree.nodes:
+                return False
+            if answer is not None:
+                tree.record_observation(node_id, answer, evidence)
+            if confirm:
+                tree.confirm(node_id, self.style)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def evidence_summary(self) -> str:
+        """本路证据树摘要 (注入战术层/汇报用)."""
+        if self._evidence_tree is None:
+            return ""
+        try:
+            return self._evidence_tree.summary()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    # ---------- Sprint 38 (Phase D, P3 攻击链驱动) 集成 ----------
+
+    def init_attack_chain(self, challenge_type: str = "", hypothesis_id: str = "",
+                          fills: list[dict] | None = None) -> bool:
+        """P3 阶段激活攻击链: 按题型模板骨架构建 (战略层填参数)."""
+        try:
+            from ctf_agent.evidence import AttackChain
+            self._attack_chain = AttackChain(
+                challenge_type=challenge_type or self._challenge_type_hint(),
+                hypothesis_id=hypothesis_id,
+            )
+            n = self._attack_chain.build_from_template(fills)
+            return n > 0
+        except Exception:  # noqa: BLE001
+            self._attack_chain = None
+            return False
+
+    def _challenge_type_hint(self) -> str:
+        return getattr(self, "_challenge_type", "") or "misc"
+
+    def attack_link_guidance(self) -> str:
+        """当前攻击环节指导 (注入战术层): 环节描述 + 验证断言 + 回溯提示."""
+        if self._attack_chain is None:
+            return ""
+        chain = self._attack_chain
+        link = chain.current_link()
+        if link is None:
+            return ""
+        lines = [
+            "[攻击链·当前环节]",
+            f"  环节 {link.link_id}: {link.desc}",
+        ]
+        if link.action:
+            lines.append(f"  动作: {link.action}")
+        if link.verify_assert:
+            lines.append(f"  验证断言: {link.verify_assert}")
+        lines.append(
+            "  完成标准: 观测到断言预期的效果后才上报 verified; "
+            "失败先查实现细节 (参数/语法), 不否定整个攻击链."
+        )
+        return "\n".join(lines)
+
+    def report_link_verified(self) -> bool:
+        """当前环节验证通过 → 进下一环. 全链完成返回 True."""
+        if self._attack_chain is None:
+            return False
+        try:
+            return self._attack_chain.mark_verified()
+        except Exception:  # noqa: BLE001
+            return False
+
+    def report_link_failed(self, fail_type: str, reason: str = "") -> str:
+        """当前环节失败 → 按类型回溯 (不全局否定).
+
+        返回回溯动作描述: impl_retry / method_backtrack / dead_end
+        """
+        if self._attack_chain is None:
+            return "dead_end"
+        try:
+            return self._attack_chain.mark_failed(fail_type, reason)
+        except Exception:  # noqa: BLE001
+            return "dead_end"
+
+    def attack_chain_summary(self) -> str:
+        if self._attack_chain is None:
+            return ""
+        try:
+            return self._attack_chain.summary()
+        except Exception:  # noqa: BLE001
+            return ""
 
     def report_dead_end(self, content: str, auto_switch: bool = True) -> str:
         """遇明确死路 (环境缺失/任务方向被事实证否): 自动切换并事后汇报.
@@ -975,6 +1254,19 @@ class Coordinator:
         new_phase = str(d.get("phase") or "").strip().upper()
         if new_phase in ("P1", "P2", "P3", "P4"):
             self._current_phase = new_phase
+            # Sprint 38 (真实环境验证复盘): 阶段切换时激活对应驱动机制 —
+            # _evidence_tree/_attack_chain 默认 None 且无调用点激活, 导致
+            # P2 证据树 / P3 攻击链从未生效 (verify 日志: 三路跑到 P2 但
+            # 无任何"证据树/待验证节点/攻击链"注入). 收到 P2 指令 → 激活
+            # 证据树; P3 → 激活攻击链 (幂等: 已激活不重复创建).
+            try:
+                if new_phase == "P2" and self._evidence_tree is None:
+                    self.init_evidence_tree()
+                elif new_phase == "P3" and self._attack_chain is None:
+                    self.init_attack_chain(
+                        challenge_type=self._challenge_type_hint())
+            except Exception:
+                pass  # 激活失败不影响主流程 (机制退化为纯巡查)
 
         # ── MUST 本地冲突校验: 与已验证死路冲突 → 降级 SHOULD + 回报 ──
         local_conflict = self._directive_conflicts_local(direction)
@@ -989,7 +1281,8 @@ class Coordinator:
             reason = (f"{reason} | ⚠️ 本地冲突: {local_conflict[:120]} "
                       f"(已降级为 SHOULD, 以本地证据为准, 已回报总指挥)")
 
-        self.set_task_contract(task_no, direction, priority)
+        self.set_task_contract(task_no, direction, priority,
+                               deliverables=d.get("deliverables") or None)
         # Sprint 36.5.2: 新任务禁忌合并 (覆盖旧任务禁忌) + 重置"任务完成等待"状态 —
         # 收到新 directive 表示总指挥已下发新任务, 该路继续执行新任务.
         self._apply_task_forbidden(d.get("forbidden") or [])
@@ -1214,6 +1507,9 @@ class Coordinator:
         if len(trajectory) < 3:
             return CoordinatorGuidance()
 
+        # Sprint 38 (Phase D): 记录题型供攻击链模板选择 (P3 激活时使用)
+        self._challenge_type = str(challenge_type or "")
+
         self._last_check_step = step_no
 
         # 更新连续错误步计数
@@ -1266,6 +1562,24 @@ class Coordinator:
             hard_issues.append(global_repeat)
             self._auto_add_forbidden(recent)
 
+        # Sprint 38 (S2): "找 flag 文件"伪问题陷阱 — 连续 ≥2 次 find/cat/xxd flag 相关
+        # 路径且无新信息 → 直接 MUST 跳转 + 自动加入禁忌 (test20 复盘:
+        # enigma 三路约 20/52 步耗在 find / -iname '*flag*', 丢掉破解主线).
+        flag_hunt = self._check_flag_hunt_trap(recent)
+        if flag_hunt:
+            hard_issues.append(flag_hunt)
+            # 将该类操作加入禁忌, 后续 intercept_forbidden 立即拦截
+            for f in ("find", "locate", "which"):
+                if f not in self._forbidden_actions:
+                    self._forbidden_actions.append(f)
+            # 防刷屏: 已加禁忌后避免每次巡查重复报
+            self._flag_hunt_blocked = True
+
+        # Sprint 38 (S1): 攻击执行断层 — 方案已提出但连续多步未落地 (最致命问题)
+        plan_issue = self._check_plan_execution(recent)
+        if plan_issue:
+            hard_issues.append(plan_issue)
+
         # 明显方向错误 (题型完全不匹配) — Sprint 36.1: 降级为软线索.
         # "方向存疑"只是启发式提示 (题型工具集映射不精确, 跨题型操作常见),
         # 无充分证据禁止否定方向 → 交 L2 LLM 结合完整轨迹/知识库判断, 不直接 MUST.
@@ -1298,6 +1612,15 @@ class Coordinator:
         execution_starvation = self._check_execution_starvation(recent, step_no)
         if execution_starvation:
             hard_issues.append(execution_starvation)
+
+        # Sprint 41 (rev-zermatt 复盘): P2 侦查饱和 — 持续执行但全是"只读侦查类"命令
+        # (ls/cat/grep/strings/xxd/hexdump/运行后即丢), 从未"写脚本解析→构造 payload→
+        # 运行验证"的产出型动作. 与 execution_starvation 互补: 后者盯"无执行类工具",
+        # 这里盯"有执行但零产出" (flash 组三路 25-36 步全 ssh_exec 零 ssh_python 根因).
+        recon_saturation = self._check_recon_saturation(recent, step_no)
+        if recon_saturation:
+            hard_issues.append(recon_saturation)
+            self._auto_add_forbidden(recent)
 
         if hard_issues:
             # Sprint 38: MUST 强制跳转 — 检测是否有 [FORCE] 标记
@@ -1335,6 +1658,12 @@ class Coordinator:
         interactive_program = self._check_interactive_program(recent, task_desc)
         if interactive_program:
             soft_hints.append(interactive_program)
+
+        # Sprint 38 (S6): web 题验证方法缺陷 — 只用服务端拉取验证前端渲染/
+        # 忽略重定向 Location/原型污染 payload 缺 __proto__ 键 (软线索, 交 L2 判断).
+        web_verify = self._check_web_verification_method(recent, challenge_type)
+        if web_verify:
+            soft_hints.append(web_verify)
 
         error_streak = self._check_errors(recent)
         if error_streak:
@@ -1408,6 +1737,99 @@ class Coordinator:
         for action, count in counter.items():
             if count >= self.max_repeats:
                 return f"完全重复: '{action[:80]}' 出现 {count} 次"
+        return ""
+
+    def _check_flag_hunt_trap(self, recent: list[dict]) -> str:
+        """Sprint 38 (S2): "找 flag 文件"伪问题陷阱检测.
+
+        test20 复盘: enigma 三路被 flag 路径占位符绑架, 约 20/52 步耗在
+        `find / -iname '*flag*'` / `cat ../../flag/...` / `xxd flag...`,
+        丢掉了破解主线. 判定:
+        - 最近 lookback 窗口内 ≥2 次 flag 相关文件搜索/读取命令
+        - 且这些步骤无实质新信息 (is_error 或 observation 无 flag/新内容)
+        触发 → 硬问题 (MUST) + 自动加禁忌 (find/locate/which).
+        """
+        if self._flag_hunt_blocked:
+            return ""  # 已阻断过, 不再重复报
+        # flag 搜索类命令签名 (find/locate/grep -rl flag / cat flag 路径 / xxd flag)
+        flag_actions = 0
+        for step in recent:
+            action = (step.get("action") or "").strip()
+            action_input = (step.get("action_input") or "").strip().lower()
+            obs = (step.get("observation") or "")
+            if action not in ("ssh_exec", "docker_exec", "ssh_python"):
+                continue
+            is_flag_search = (
+                ("find" in action_input and ("flag" in action_input or "ctf{" in action_input))
+                or ("cat" in action_input and "/flag" in action_input)
+                or ("xxd" in action_input and "flag" in action_input)
+                or ("grep" in action_input and ("flag" in action_input or "ctf" in action_input)
+                    and ("-r" in action_input or "-rl" in action_input))
+            )
+            if not is_flag_search:
+                continue
+            # 无新信息: 错误 或 observation 不含 flag 文本且非目标命中
+            has_flag_content = ("flag" in obs.lower() and "CTF{" in obs) or ("ctf{" in obs.lower())
+            if step.get("is_error") or not has_flag_content:
+                flag_actions += 1
+        if flag_actions >= 2:
+            return (
+                f"[FORCE] 检测到连续 {flag_actions} 次 flag 文件搜索 (find/cat/xxd flag 路径) "
+                f"且无新信息 — 这是典型的'找 flag 文件'伪问题陷阱! "
+                f"flag 通常是加密文件/路径占位符/服务端响应, 搜索文件系统无法找到. "
+                f"立即停止所有 find/cat flag 相关命令, 回到解题主线: "
+                f"分析题目逻辑/破解加密/攻击服务, flag 会在正确解题后自然出现."
+            )
+        return ""
+
+    def _check_plan_execution(self, recent: list[dict]) -> str:
+        """Sprint 38 (S1): 攻击执行断层检测 — 方案已提出但从未落地.
+
+        test20 复盘 (最致命问题): 大量轨迹 thought 写出了正确攻击方案
+        (构造 payload/用 bkcrack/写模拟器/恢复参数), 但后续连续多步仍为
+        纯读取/侦查类动作, 方案从未执行. 判定:
+        - 最近窗口内出现"攻击意图"关键词 (构造/利用/攻击/写脚本/模拟/恢复/爆破/注入)
+        - 且其后的连续 N 步仍为纯读取类动作 (cat/ls/find/strings/file/xxd/sed/head)
+        → 触发 MUST: 方案已提出未执行, 下一步必须落地.
+        """
+        if len(recent) < 3:
+            return ""
+        _ATTACK_INTENT = (
+            "构造", "利用", "攻击", "写脚本", "写exploit", "模拟", "恢复",
+            "爆破", "注入", "解密", "还原", "payload", "exploit", "script",
+            "bkcrack", "angr", "z3", "模拟器", "bypass", "绕过",
+        )
+        _READ_ONLY_ACTIONS = {
+            "ssh_exec": ("cat", "ls", "find", "strings", "file", "xxd", "sed", "head", "tail", "wc"),
+            "docker_exec": ("cat", "ls", "find", "strings", "file", "xxd", "sed", "head", "tail", "wc"),
+        }
+        # 扫描: 找到最近一次攻击意图出现的位置
+        attack_step_idx = -1
+        for i, step in enumerate(recent):
+            combined = f"{step.get('thought') or ''} {step.get('action') or ''}".lower()
+            if any(k.lower() in combined for k in _ATTACK_INTENT):
+                attack_step_idx = i
+        if attack_step_idx < 0 or attack_step_idx >= len(recent) - 1:
+            return ""  # 无攻击意图 或 意图在最后一步 (尚无后续可判定)
+        # 检查意图之后的连续步是否都是纯读取
+        read_streak = 0
+        for step in recent[attack_step_idx + 1:]:
+            action = (step.get("action") or "").strip()
+            ai = (step.get("action_input") or "").lower()
+            if action in _READ_ONLY_ACTIONS:
+                cmd = ai.split("&&")[-1].strip()
+                if cmd.startswith(_READ_ONLY_ACTIONS[action]):
+                    read_streak += 1
+                    continue
+            break
+        if read_streak >= 2:
+            intent = str(recent[attack_step_idx].get("thought") or "")[-100:]
+            return (
+                f"[FORCE] 你已提出攻击方案 (意图: {intent[:80]}...) "
+                f"但后续 {read_streak} 步仍在做纯读取/侦查操作, 方案从未落地执行! "
+                f"立即停止读取类操作, 下一步必须执行该攻击方案对应的工具调用 "
+                f"(构造 payload / 写脚本 / 运行攻击命令), 用实际观测验证方案是否可行."
+            )
         return ""
 
     @staticmethod
@@ -1754,6 +2176,86 @@ class Coordinator:
 
         return ""
 
+    def _check_recon_saturation(self, recent: list[dict], step_no: int) -> str:
+        """Sprint 41 (rev-zermatt 复盘): P2 侦查饱和检测 — 有执行但零产出.
+
+        根因: flash 组三路 25-36 步全部 ssh_exec 且命令是 ls/cat/grep/strings/xxd/
+        hexdump/运行后即丢, 从不 ssh_python 写脚本解析 VM 指令集 → 构造 payload →
+        运行验证. aggressive 36 步零 ssh_python 是致命缺陷 (VM 逆向需脚本分析).
+
+        判定 (保守, 防误伤):
+        - 步数 >= recon_saturation_min_steps (默认 14, 前期侦查合理)
+        - 最近 lookback 窗口内: 执行类工具占比高, 但 ssh_python/docker_python/
+          攻击类工具出现次数为 0, 且无 check_findings/share_finding/write_shared_file
+          等"产出/协作"动作 (说明一直在自己反复看, 没沉淀也没推进)
+        - 纯执行工具 ssh_exec/docker_exec 命令若含"写文件/上传/网络请求"不视为纯侦查
+        """
+        if step_no < self.recon_saturation_min_steps:
+            return ""
+        window = recent[-self.lookback:] if len(recent) >= self.lookback else recent
+        if len(window) < 6:
+            return ""
+
+        # 产出/推进型动作: 写脚本 / 攻击 / 协作沉淀 — 出现过任一即不算饱和
+        _PRODUCTIVE_TOOLS = {
+            "ssh_python", "docker_python", "ssh_upload", "docker_upload",
+            "check_findings", "share_finding", "write_shared_file", "read_shared_file",
+            "pwn_exploit", "pwn_ropgadget", "pwn_checksec", "exploit_template",
+            "sqlmap", "web_sqli", "web_dirscan", "lfi_log_inject", "php_filter_chain",
+            "angr_symbolic_exec", "bkcrack_attack", "crypto_rsa", "des_cryptanalysis",
+            "feistel_decrypt", "hash_collision", "lwe_decode", "mceliece_analyze",
+            "zkp_forge_proof", "cgb_solve", "common_d_attack", "ecdsa_nonce_reuse",
+        }
+        # 纯执行类工具 (ssh_exec/docker_exec/http_request 属"有动作但可能是侦查")
+        _EXEC_ONLY = {"ssh_exec", "docker_exec", "http_request"}
+
+        exec_count = 0
+        exec_no_prod = 0  # 执行类步中无产出型动作的步数
+        pure_recon_cmds = 0  # 纯侦查命令 (ls/cat/grep/strings/xxd/hexdump/head/tail/file)
+        _RECON_CMD_PREFIXES = (
+            "ls", "cat", "grep", "strings", "xxd", "hexdump", "head", "tail",
+            "file", "find", "wc", "which", "stat", "echo", "env", "pwd",
+        )
+        for s in window:
+            action = (s.get("action") or "").strip()
+            if not action:
+                continue
+            if action in _PRODUCTIVE_TOOLS:
+                return ""  # 有任何产出型动作 → 不算侦查饱和
+            if action in _EXEC_ONLY:
+                exec_count += 1
+                ai_raw = str(s.get("action_input") or "").lower()
+                # 含写文件/上传/网络请求的执行命令视为"动作", 不视为纯侦查
+                if any(t in ai_raw for t in ("tee ", "> /", ">  /", "wget", "curl", "nc ", "upload", "chmod +x", ".py >")):
+                    continue
+                # action_input 是 JSON (含 command 字段) → 提取纯命令
+                cmd = ai_raw
+                try:
+                    _ai_json = json.loads(s.get("action_input") or "{}")
+                    cmd = str(_ai_json.get("command") or _ai_json.get("url") or "").strip()
+                except Exception:
+                    pass
+                cmd = cmd.split("&&")[-1].strip() if "&&" in cmd else cmd.strip()
+                if cmd.startswith(_RECON_CMD_PREFIXES):
+                    pure_recon_cmds += 1
+                exec_no_prod += 1
+
+        # 判定: 窗口内 ≥8 步执行类且纯侦查命令 ≥6 (侦查主导), 且零产出
+        if exec_no_prod >= 8 and pure_recon_cmds >= 6:
+            last_cmds = " / ".join(
+                (str(s.get("action_input") or "")[:50].splitlines()[0] for s in window[-4:]
+                 if (s.get("action") or "") in _EXEC_ONLY)
+            )
+            return (
+                f"[MUST] 侦查饱和: 最近 {len(window)} 步全为只读侦查命令 "
+                f"(ls/cat/grep/strings/xxd/head/tail), 无任何产出型动作 "
+                f"(ssh_python 写脚本 / 攻击工具 / 共享线索). 对复杂逆向/解析型题目, "
+                f"纯侦查无法推进: 必须立即用 ssh_python 写脚本对已收集的数据做解析 "
+                f"(反汇编/模拟执行/格式解析) 并运行验证, 或构造 payload 提交; "
+                f"停止重复查看同一批文件. 最近命令: {last_cmds}"
+            )
+        return ""
+
     def _check_errors(self, recent: list[dict]) -> str:
         """L1-B: 检测连续错误步 (进展停滞线索).
 
@@ -1992,6 +2494,65 @@ class Coordinator:
             return (f"方向存疑: 最近 {len(window)} 步操作 {window_actions} 与题型 "
                     f"{challenge_type} 期望工具集完全不相交 (可能方向偏离, "
                     f"建议对照题目类型重新审视; 若属跨题型操作请说明理由继续)")
+        return ""
+
+    def _check_web_verification_method(self, recent: list[dict], challenge_type: str) -> str:
+        """Sprint 38 (S6): web 题验证方法缺陷检查 — 仅 web 题型启用, 产出软提示.
+
+        根因 (test20 复盘): web-biohazard 用服务端 HTML 响应验证客户端渲染结果,
+        得假阴性 — http_request 是服务端拉取, 不执行 JS, 收到的只是静态模板.
+        常见验证方法缺陷:
+        1. 验证 XSS/客户端渲染行为 → 只用 http_request, 无 JS 执行环境
+        2. 响应出现 302/301 → 只看状态码, 不看 Location 头 (跳转目标常是关键线索)
+        3. 原型污染测试 → payload 未用 __proto__ 键
+        """
+        if challenge_type.lower() != "web":
+            return ""
+        window = recent[-8:]
+        if len(recent) < 4:
+            return ""
+        if not any((s.get("action") or "").strip() == "http_request" for s in window):
+            return ""
+
+        # 1. XSS/前端渲染: thought/observation 提及客户端行为但只有服务端拉取
+        text = " ".join(
+            f"{s.get('thought') or ''} {s.get('observation') or ''}" for s in window
+        )
+        low = text.lower()
+        hints: list[str] = []
+        if any(k in low for k in ("xss", "alert(", "cookie", "前端", "javascript", "js 渲染", "client-side", "dom 渲染")):
+            has_js_env = any(
+                (s.get("action") or "").strip() in ("ssh_python", "ssh_exec")
+                for s in window
+            )
+            if not has_js_env:
+                hints.append(
+                    "XSS/前端渲染验证缺陷: 验证 XSS/客户端渲染行为只用 http_request "
+                    "(服务端拉取, 不执行 JS, HTML 只是静态模板, 可能假阴性). "
+                    "请改用 ssh_python 起无头浏览器 (playwright/selenium/pyppeteer) 或 "
+                    "带 JS 渲染的请求库 (requests_html) 验证浏览器内行为."
+                )
+
+        # 2. 302/301 重定向: observation 出现重定向但只关注状态码, 未提 Location
+        obs = " ".join(str(s.get("observation") or "") for s in window)
+        if re.search(r"\b(302|301)\b|redirect|重定向", obs, re.I):
+            hints.append(
+                "重定向验证缺陷: 响应出现 302/301 重定向 — 跳转目标在 Location 头中, "
+                "常是核心线索 (跳转路径/参数). 用 http_request 显式打印响应头 "
+                "(或 curl -sI) 看 Location, 不要只看状态码."
+            )
+
+        # 3. 原型污染: 提及其为攻击面但 payload 未用 __proto__ 键
+        if "原型污染" in low or "prototype pollution" in low:
+            if "__proto__" not in low and "constructor.prototype" not in low:
+                hints.append(
+                    "原型污染测试缺陷: payload 必须用 __proto__ 键 "
+                    "(JSON: {\"__proto__\": {...}} 或 __proto__.x=y), 合并类函数 "
+                    "(Object.assign/$.extend/lodash merge) 才会触发污染. "
+                    "用 Object.prototype.x 是否被污染做验证."
+                )
+        if hints:
+            return "验证方法存疑: " + " | ".join(hints)
         return ""
 
     def _build_rule_guidance(self, issues: list[str], challenge_type: str) -> str:

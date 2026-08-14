@@ -478,13 +478,13 @@ class Coordinator:
         self._pending_fired_step = 0   # 在途/待消费分析对应的发起步 (注入时声明来源步)
         self._last_fired_step = 0      # 最近一次发起巡查的步数 (首次/近上限门槛)
         self._last_injected_step = 0   # 最近一次注入结果的步数 (发起节奏基准: +N 步再巡查)
-        # 巡查间隔钳制在 5~10 步 (用户约束 2026-08-03: 避免整体过于频繁)
+        # 巡查间隔钳制在 5~10 步 (设计约束 2026-08-03: 避免整体过于频繁)
         self.check_interval = max(5, min(10, self.check_interval))
 
     def should_check(self, step_no: int, max_steps: int = 0, live_errors: int = -1) -> bool:
         """是否到了巡查发起时机 (异步事件驱动版).
 
-        发起节奏 (用户 2026-08-03 约束: 上一次注入后 5 步, 整体不过频):
+        发起节奏 (设计约束 2026-08-03: 上一次注入后 5 步, 整体不过频):
         1. 队列空 (无在途分析 + 无未消费结果) — 堆积上限 1
         2. 首次巡查: 第 first_check 步 (默认 10)
         3. 常规: 上一次注入结果之后 check_interval 步 (默认 5) — 以注入时刻为基准,

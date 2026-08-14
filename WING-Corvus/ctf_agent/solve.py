@@ -398,11 +398,16 @@ def _build_engine(task: dict[str, Any], settings: Any):
         except Exception:
             docker_client = None
 
-    llm = RoutedLLMClient(settings=settings)
+    llm = RoutedLLMClient(settings=settings, layer="tactic")
+    # Sprint 39 (2026-08-14): 分层 LLM — 战略层 (coordinator/巡查) 可独立指定
+    # provider/model (如官方 pro), 战术层 (ReActEngine) 保持全局默认 (zen flash).
+    # 未配置 layer_llm_map 时与 llm 完全同构 (同 settings, 同路由).
+    llm_strategy = RoutedLLMClient(settings=settings, layer="strategy")
     # Sprint 32.5: 应用 controller 领题前的冒烟测试标记,
     # 快速跳过不可用 provider, 避免 45s*3 超时重试浪费时间
     try:
         llm.apply_smoke_from_file(str(_PROJECT_ROOT / "data" / "api_smoke.json"))
+        llm_strategy.apply_smoke_from_file(str(_PROJECT_ROOT / "data" / "api_smoke.json"))
     except Exception:
         pass
     # NSS 等竞赛场景: 禁用本地靶场控制 (range_control) —— 任务描述已禁止,
@@ -555,7 +560,7 @@ def _build_engine(task: dict[str, Any], settings: Any):
         # Sprint 34: 巡查节奏风格化 — None=按风格 (保守10/中立8/激进5/创新8);
         # 仅当 .env 显式设置非默认 COORDINATOR_PATROL_GAP 时全局覆盖
         coordinator=_make_coordinator(
-            llm, skill_library, long_term, style=style, experience_library=exp_lib,
+            llm_strategy, skill_library, long_term, style=style, experience_library=exp_lib,
             knowledge_base=kb,
             check_interval=(
                 None if int(getattr(settings, "coordinator_patrol_gap", 5)) == 5
@@ -742,7 +747,7 @@ def _curate(result: ReActResult, task: dict[str, Any], llm: Any) -> None:
     与 _learn/_review/ingest_solution 互补: 前两者写 Skill/md 技能库/LTM,
     这里把轨迹提炼为分阶段 playbook/pitfall + role_guides + patterns.
     独立 try/except, 失败不影响主流程; curator 内部有 finally 兜底落盘
-    (用户规则: 意外退出也要整理完才能退出).
+    (设计规则: 意外退出也要整理完才能退出).
     """
     try:
         from pathlib import Path as _Path
@@ -891,7 +896,28 @@ def main(argv: list[str] | None = None) -> int:
     global _real_stdout
     parser = argparse.ArgumentParser(description="CTF-agent 独立求解入口")
     parser.add_argument("--task-file", required=True, help="task JSON 文件路径")
+    parser.add_argument(
+        "--layer-llm", action="append", default=None, metavar="LAYER=PROVIDER[:MODEL]",
+        help="分层 LLM 覆盖 (Sprint 39): 指定某层使用的 provider[:model], 可多次; "
+             "layer ∈ commander/strategy/tactic, provider ∈ zen/go/fallback/pro. "
+             "如 --layer-llm strategy=pro 表示战略层用 pro provider. "
+             "不传任何 --layer-llm 且无 LAYER_LLM_MAP 时全部层跟随全局默认 (zen flash).",
+    )
     args = parser.parse_args(argv)
+
+    # Sprint 39: 合并 --layer-llm 运行参数到 LAYER_LLM_MAP 环境变量,
+    # 在 solve_task 创建 settings (get_settings 单例) 之前生效; 同名覆盖 env 值.
+    if args.layer_llm:
+        merged: dict[str, str] = {}
+        for item in (os.environ.get("LAYER_LLM_MAP", "") or "").split(","):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                merged[k.strip()] = v.strip()
+        for item in args.layer_llm:
+            if "=" in item:
+                k, v = item.split("=", 1)
+                merged[k.strip()] = v.strip()
+        os.environ["LAYER_LLM_MAP"] = ",".join(f"{k}={v}" for k, v in merged.items())
 
     task_path = Path(args.task_file)
     if not task_path.exists():

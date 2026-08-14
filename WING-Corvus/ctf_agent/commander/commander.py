@@ -82,6 +82,9 @@ class TaskAssignment:
     task: str
     rationale: str = ""
     forbidden: list[str] = field(default_factory=list)  # Sprint 36.5.2: 任务禁忌 (阶段约束)
+    # Sprint 38 (Phase B, P1 任务驱动): 产出物清单 (deliverables) — 侦查任务的
+    # 验收标准. 每路完成对应产出物后才算任务完成 (report_task_done 逐项汇报).
+    deliverables: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -224,6 +227,12 @@ class Commander:
                        if str(f).strip()]
                 if not fbd:
                     fbd = self._phase_forbidden("P1")
+                # Sprint 38 (Phase B): 产出物清单 (deliverables) — LLM 输出优先,
+                # 缺失时按风格兜底 (验收标准: 该路侦查任务必须交付的内容)
+                deliv = [str(d).strip() for d in (a.get("deliverables") or [])
+                         if str(d).strip()]
+                if not deliv:
+                    deliv = self._default_deliverables(style)
                 # 任务契约编号统一按顺序递增 (忽略 LLM 输出, 保证唯一性,
                 # 战略层以 task_no 识别当前任务契约)
                 assignment = TaskAssignment(
@@ -232,6 +241,7 @@ class Commander:
                     task=task,
                     rationale=str(a.get("rationale") or "")[:200],
                     forbidden=fbd[:8],
+                    deliverables=deliv[:5],
                 )
                 self._assignments[style] = assignment
                 assignments.append(assignment)
@@ -245,6 +255,7 @@ class Commander:
                     task=self._default_task(style),
                     rationale="LLM 未分配, 默认方向兜底",
                     forbidden=self._phase_forbidden("P1"),
+                    deliverables=self._default_deliverables(style),
                 ))
         # 统一按 styles 顺序分配 task_no (唯一且稳定, 战略层以 task_no 识别契约)
         ordered = {a.style: a for a in assignments}
@@ -257,6 +268,11 @@ class Commander:
             final.append(a)
         self._assignments = {a.style: a for a in final}
         assignments = final
+        # Sprint 38 (真实环境验证复盘): P1 限时必须从"领题分工完成"起算 —
+        # __init__ 已设置 _phase_enter_ts, 而 assign_initial (LLM 分工) 可能耗时
+        # 1-2 分钟 (API 慢/重试), 若不重置, 领题一完成 P1 就已"超时"被强制跳过,
+        # 三路 agent 未开始侦查就被推入 P2 (verify 日志: 分工与 P2 指令同秒发出).
+        self._phase_enter_ts = time.time()
         self._context.append(
             f"[领题] 分工: " + "; ".join(
                 f"{a.style}→任务{a.task_no}: {a.task[:80]}" for a in assignments
@@ -273,6 +289,30 @@ class Commander:
             "aggressive": "主攻动态验证: 运行观察/调试/快速试错, 定位核心逻辑",
             "innovative": "主攻非常规路径: 符号执行/代数闭式解/侧信道/线索交叉",
         }.get(style, f"按 {style} 风格探索解题路径")
+
+    @staticmethod
+    def _default_deliverables(style: str) -> list[str]:
+        """Sprint 38 (Phase B): 侦查任务产出物清单兜底 (按风格).
+
+        验收标准: 该路完成以下产出物后, report_task_done 才能通过验收.
+        """
+        return {
+            "conservative": [
+                "完整读取题目侧全部源码/关键附件 (列出文件清单与核心函数定位)",
+                "梳理程序/协议架构与关键逻辑 (数据流/校验点/依赖关系)",
+                "输出漏洞点或攻击面候选清单 (每项附证据与位置)",
+            ],
+            "aggressive": [
+                "运行/连接目标, 记录实际行为与交互接口 (命令/参数/响应格式)",
+                "验证关键功能路径并记录观测结果 (输入→输出映射)",
+                "输出动态验证发现的线索 (行为异常/边界输入响应/隐藏功能)",
+            ],
+            "innovative": [
+                "检查隐藏信息面 (注释/元数据/环境变量/备份文件/符号链接)",
+                "探索非常规输入面 (特殊字符/编码绕过/未文档化参数)",
+                "输出非常规线索清单 (可能被其他路忽略的发现)",
+            ],
+        }.get(style, ["完成侦查任务并汇报关键发现"])
 
     # ---------- Sprint 36.5.2: 阶段禁忌 + P1 限时 (2026-08-06) ----------
 
@@ -1441,7 +1481,7 @@ class Commander:
         return self._phase
 
     def heartbeat(self) -> str:
-        """Sprint 36.5: 单行状态心跳 (供总指挥循环定期输出, 让用户看到它在工作).
+        """Sprint 36.5: 单行状态心跳 (供总指挥循环定期输出, 让调用方看到它在工作).
 
         内容: 当前阶段 + 汇报跟踪 + 指令数 + 失败 flag 数. 空汇报时也有输出.
         Sprint 36.5.2: 增加单路先行标记 (先行P2/P3) 与 P1 限时.

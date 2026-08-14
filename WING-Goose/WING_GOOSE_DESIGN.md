@@ -365,7 +365,7 @@ check: 每 5 步拉取兄弟的 FACT/LIKELY 发现 → 注入 prompt
 
 | 风格 | 巡查间隔 | max_errors | 温度 | 特点 |
 |------|---------|-----------|------|------|
-| conservative | 5 步（用户约束统一 5） | 3 | 0.0 | 稳健节奏，干预门槛高（至少 FACT+LIKELY 支撑） |
+| conservative | 5 步（设计约束统一 5） | 3 | 0.0 | 稳健节奏，干预门槛高（至少 FACT+LIKELY 支撑） |
 | neutral | 5 | 3 | 0.0 | 均衡节奏 |
 | aggressive | 5 | 5 | 0.0 | 快节奏，容忍快速试错；"有效试错"不干预 |
 | innovative | 5 | 3 | 0.4 | 探索节奏，必产 creative_hints 灵感板 |

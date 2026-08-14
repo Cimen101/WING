@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # pro 模型最大重试步数
     pro_max_steps: int = Field(default=40, alias="PRO_MAX_STEPS")
 
+    # ---- 分层 LLM 覆盖 (2026-08-14, per-layer 模型选择) ----
+    # 各层可独立指定 provider/model, 默认空 = 全部跟随全局路由 (LLM_PROVIDER 决定).
+    # 格式: 逗号分隔 "layer=provider[:model]", layer ∈ commander/strategy/tactic,
+    #       provider ∈ zen/go/fallback/pro, model 可省略 (用该 provider 的 settings 模型).
+    # 例: "strategy=pro:deepseek-v4-pro,tactic=zen:deepseek-v4-flash"
+    # 运行参数 --layer-llm 可叠加 (覆盖同名项), 由 solve.py 合并写入此字段.
+    layer_llm_map: str = Field(default="", alias="LAYER_LLM_MAP")
+
     # ---- 思考模式 (Sprint 26, deepseek-v4-flash thinking_mode) ----
     # 官方文档: https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
     # 启用后模型先输出思维链(reasoning_content)再输出最终回答(content), 提升准确性

@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ctf_agent.ssh import SSHClient
@@ -141,6 +142,25 @@ def _build_bg_script(
             "fi",
         ]
     return "\n".join(lines)
+
+
+# Sprint 38.5 (Phase H H2, 观测真实性层): 只读探测判定 —
+# 自动保底重跑仅在"只读网络探测"时执行, 避免重复 POST/写操作造成副作用.
+# curl/wget/nc 带写操作 flag (-d/--data/-X POST/PUT/DELETE/--upload-file 等) 视为非只读.
+_HTTP_WRITE_FLAGS = re.compile(
+    r"(--data|-d\b|--data-raw|--data-urlencode|--upload-file|--form\b|-F\b"
+    r"|-X\s+(POST|PUT|DELETE|PATCH|TRACE))",
+    re.IGNORECASE,
+)
+
+
+def _looks_read_only_probe(cmd: str) -> bool:
+    """判断命令是否为只读网络探测 (curl/wget/nc), 供 H2 自动保底重跑使用."""
+    if not re.search(r"\b(curl|wget|nc|ncat)\b", cmd):
+        return False
+    if _HTTP_WRITE_FLAGS.search(cmd):
+        return False
+    return True
 
 
 def _parse_bg_output(result: Any, command: str, wait_sec: int) -> str | None:
@@ -382,6 +402,54 @@ class SSHExecTool(Tool):
             # 错误命令标注（便于 LLM 识别失败）
             if not result.is_success and result.exit_code != 0:
                 output = f"ERROR: 命令退出码 {result.exit_code}\n{output}"
+            # Sprint 38 (观测真实性层): 过滤管道吞掉关键输出的保底提示 —
+            # 命令含 grep/sed/awk/head/tail 等过滤管道且失败时, 往往是
+            # "响应不含过滤关键词 → grep 无匹配 → rc=1 → 响应体丢失"
+            # (第四轮 web-uc 复盘: innovative 用 `curl ... | grep -E 'HTTP|Location'
+            # 判定 HPP 失败, 实际是 grep 吞掉了响应). LLM 基于失真的观测
+            # 会误判攻击路径. 检测到"过滤管道 + 失败 + 无输出"时, 提示
+            # 重跑不带过滤的原始命令, 恢复观测真实性.
+            if (
+                not result.is_success
+                and result.exit_code != 0
+                and not (result.stdout or "").strip()
+                and not (result.stderr or "").strip()
+            ):
+                filter_pat = re.compile(
+                    r"\|\s*(grep|egrep|fgrep|sed|awk|head|tail|cut|tr|sort|uniq)"
+                )
+                fm = filter_pat.search(command)
+                if fm:
+                    output = (
+                        f"{output}\n\n"
+                        "⚠️ 提示: 命令失败且无输出, 可能因过滤管道 (grep/sed/awk/"
+                        "head/tail) 吞掉了关键响应. 若正在探测 HTTP/服务响应, "
+                        "请重跑**不带过滤管道**的原始命令 (或用 -i/-D - 看完整"
+                        "响应头/状态码/Location), 不要基于当前空输出下结论."
+                    )
+                    # Sprint 38.5 (Phase H H2, 输出保底协议): 对只读网络探测
+                    # **自动重跑**不带过滤的原始命令, 把真实响应直接带进
+                    # observation (不止提示 LLM — 观测不再依赖 LLM 是否会听提示).
+                    raw_cmd = command[:fm.start()].strip()
+                    if _looks_read_only_probe(raw_cmd):
+                        try:
+                            rerun = self.ssh_client.exec_cmd(
+                                f"{raw_cmd} 2>&1 | head -c 3000",
+                                cwd=effective_cwd,
+                                timeout=30,
+                            )
+                            rerun_out = (rerun.stdout or "").strip() or (
+                                rerun.stderr or ""
+                            ).strip()
+                            if rerun_out:
+                                output = (
+                                    f"{output}\n\n"
+                                    "--- 自动保底重跑 (已剥离过滤管道, 完整原始响应) ---\n"
+                                    f"$ {raw_cmd}\n"
+                                    f"{_truncate(rerun_out, 3000)}"
+                                )
+                        except Exception:  # noqa: BLE001
+                            pass
             # Sprint 7 P0-2: 环境降级检测（docker 不可用 / 端口不可达）
             # 当 agent 尝试 docker build 或连接动态服务失败时，注入降级建议
             # 引导 agent 切换到"静态分析源码"模式，避免反复重试卡死 30 分钟

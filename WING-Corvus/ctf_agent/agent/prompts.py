@@ -902,6 +902,98 @@ _PHASE_TOOL_ALLOWLIST: dict[str, set[str]] = {
 }
 
 
+# Sprint 38 (S3, Phase E): 题型推荐工具链 — 解决"专用工具零使用"
+# (test20 复盘: pwn_checksec/pwntools/angr/z3/zsteg 全部预装但 51 轨迹零调用,
+# 只走 ssh_exec 通用路径). 按题型注入推荐工具链段, 引导 agent 使用专用工具.
+TYPE_TOOL_CHAINS: dict[str, str] = {
+    "crypto": (
+        "crypto 题推荐专用工具链:\n"
+        "  - fpylll / sage (格攻击 LLL/CVP) — mhk2 类格问题必须用\n"
+        "  - bkcrack (ZipCrypto 已知明文攻击) — zip 类题目用\n"
+        "  - python Crypto 库 (RSA/AES/RC4 等标准解密)\n"
+        "  - 数学推导优先于暴力枚举 (恢复参数用 gcd/连分数/小指数攻击等)"
+    ),
+    "reverse": (
+        "reverse 题推荐专用工具链:\n"
+        "  - binary_deep_analyze (ELF 分析: 符号/段/算法指纹)\n"
+        "  - angr / z3 (符号执行/约束求解) — 校验函数求解器优先用\n"
+        "  - 动态运行观察 (gdb 或直接运行 + 观察输出) 辅助静态分析\n"
+        "  - 复杂 VM/加密逻辑: 写模拟器/求解脚本, 不要只靠人工读汇编"
+    ),
+    "pwn": (
+        "pwn 题推荐专用工具链:\n"
+        "  - pwn_checksec (防护检查: NX/CANARY/PIE/RELRO — 决定利用策略)\n"
+        "  - pwntools (构造 payload 与交互: cyclic/p32/p64/recvuntil)\n"
+        "  - 必须连接远程服务交互验证, 不能只做静态分析\n"
+        "  - 栈溢出/堆利用先确定保护, 再选对应利用原语"
+    ),
+    "web": (
+        "web 题推荐验证方法论:\n"
+        "  - 用 curl/http_request 实测每个关键行为, 不要只看源码推断\n"
+        "  - 302 跳转必须看 Location 头, 不只看响应码\n"
+        "  - XSS 用无头浏览器验证 (不是用服务端 HTML 验证客户端渲染)\n"
+        "  - 参数污染/原型污染考虑 __proto__ 与重复参数 (Flask/PHP 解析差异)\n"
+        "  - 服务端渲染 vs 客户端渲染区分开, 各自验证"
+    ),
+    "misc": (
+        "misc 题推荐专用工具链:\n"
+        "  - zsteg / steghide / binwalk (隐写与文件提取)\n"
+        "  - 图论问题用 networkx (哈密顿路径/最短路径等)\n"
+        "  - 格式分析优先 (文件头/魔法数), 再决定还原方案"
+    ),
+}
+
+# 题型名称归一化 (build_system_prompt 的 challenge_type 可能是 reverse/rev 等)
+_TYPE_TOOL_KEY: dict[str, str] = {
+    "rev": "reverse", "reverse": "reverse", "crypto": "crypto",
+    "pwn": "pwn", "web": "web", "misc": "misc", "forensics": "misc",
+}
+
+
+# Sprint 38.5 (Phase H H1, 观测真实性层): 观测保真规范 —
+# 防"观测被脚本过滤污染"(第四轮 web-uc 复盘: `curl -s ... | grep -E 'HTTP|Location'`
+# 在响应不含关键词时 grep 退出码 1, 响应体丢失 → LLM 误判 HPP 失败放弃攻击路径).
+# 通用规则注入所有题型; web 额外注入探测命令模板.
+OBSERVATION_SAFETY = (
+    "观测保真规范 (Sprint 38, 必须遵守):\n"
+    "  - 探测 HTTP/服务响应**不要用过滤管道** (grep/sed/awk/head/tail/sort/uniq), "
+    "grep 无匹配会以退出码 1 失败并吞掉整个响应体 → 观测失真, 误判攻击失败.\n"
+    "  - 正确做法: 先把完整响应存文件 (如 `curl -i -s URL -o /tmp/r.out`), "
+    "再单独 `grep 关键词 /tmp/r.out` 过滤文件, 原始响应永不丢失.\n"
+    "  - 命令失败且无输出时, 重跑**不带过滤**的原始命令看完整响应, "
+    "不要基于空输出下结论.\n"
+    "  - 探测 HTTP 用 `curl -i -s` (带响应头); 302/301 必须看 Location 头."
+)
+
+WEB_OBSERVATION_TEMPLATES = (
+    "web 探测命令模板 (观测保真):\n"
+    "  - 看完整响应: `curl -i -s 'URL'`\n"
+    "  - 存响应再过滤: `curl -s 'URL' -o /tmp/r.out && wc -c /tmp/r.out && "
+    "head -80 /tmp/r.out` (响应已存盘, 可再 grep 不丢原始数据)\n"
+    "  - 参数污染验证: 重复参数看后端解析差异 (如 `curl -i -s 'URL?tier=blue&tier=gold'` "
+    "或 POST 双参数), 用响应/注册结果判断而非单次 grep 无匹配."
+)
+
+
+def _inject_type_tool_chain(challenge_type: str) -> str:
+    """按题型注入推荐工具链段 (Sprint 38 S3). 未知题型返回空."""
+    key = _TYPE_TOOL_KEY.get(str(challenge_type or "").lower().strip())
+    if not key:
+        return ""
+    text = TYPE_TOOL_CHAINS.get(key, "")
+    return f"\n\n{text}" if text else ""
+
+
+def _inject_observation_safety(challenge_type: str) -> str:
+    """注入观测保真规范 (Sprint 38.5 H1). 通用段所有题型注入, web 额外加探测模板."""
+    text = OBSERVATION_SAFETY
+    key = _TYPE_TOOL_KEY.get(str(challenge_type or "").lower().strip())
+    if key == "web":
+        text = f"{text}\n\n{WEB_OBSERVATION_TEMPLATES}"
+    return f"\n\n{text}"
+
+
+
 def _filter_tools_by_phase(tools: list[Tool], phase: str | None) -> list[Tool]:
     """按阶段过滤工具.**不改变工具可用性**, 仅控制前台展示以降低认知过载.
 
@@ -981,6 +1073,22 @@ def build_system_prompt(
                 prompt = f"{prompt}\n\n{arsenal_text}"
         except Exception:  # noqa: BLE001
             pass
+
+    # Sprint 38 (S3, Phase E): 题型推荐工具链 — 引导使用专用工具 (治工具零使用)
+    try:
+        chain_text = _inject_type_tool_chain(challenge_type)
+        if chain_text:
+            prompt = f"{prompt}{chain_text}"
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Sprint 38.5 (Phase H H1, 观测真实性层): 观测保真规范 — 防"观测被脚本过滤污染"
+    try:
+        obs_text = _inject_observation_safety(challenge_type)
+        if obs_text:
+            prompt = f"{prompt}{obs_text}"
+    except Exception:  # noqa: BLE001
+        pass
     return prompt
 
 

@@ -248,6 +248,11 @@ def _trim_observation(text: str, max_chars: int = 6000) -> str:
             deduped.append(ln)
             prev = ln
     text = "\n".join(deduped)
+    # 1.5 Sprint 38 (S4): 相似行去重 — 折叠"前缀相同但含可变部分"的重复行
+    # (如 traceback 内重复调用帧、重复的 "trying N..." 进度行、重复数组元素).
+    # 仅当总行数超过阈值时启用 (小输出不做相似性判断, 避免误折叠有意义行).
+    if len(deduped) > 40:
+        text = _collapse_similar_lines(text)
     # 2. 超长截断: 保留头尾, 中间省略
     if len(text) <= max_chars:
         return text
@@ -260,10 +265,51 @@ def _trim_observation(text: str, max_chars: int = 6000) -> str:
     )
 
 
+def _collapse_similar_lines(text: str) -> str:
+    """Sprint 38 (S4): 折叠"结构相同、可变部分不同"的连续行 — 把大量
+    同构行压缩为 首行 + [折叠 N 行相似] + 末行, 保留信息轮廓同时大幅降噪.
+
+    典型场景: traceback 重复调用帧 / "trying 0x1000..." 爆破进度 /
+    "[+] token N" 批量输出. 仅当同构行数 ≥ 3 且总行数较多时才折叠.
+    结构签名: 行首 60 字符内所有数字序列归一化为 # — 结构相同仅数值不同
+    的行视为相似 (0x0/0x1/0x2 → 同一签名), 但不同文本结构不折叠.
+    """
+    lines = text.splitlines()
+    if len(lines) < 3:
+        return text
+    SIGN_LEN = 60
+    groups: list[list[str]] = []
+    cur: list[str] = []
+    prev_sig: str | None = None
+    for ln in lines:
+        sig = _SIGN_RE.sub("#", ln[:SIGN_LEN])
+        if prev_sig is None:
+            cur = [ln]
+            prev_sig = sig
+            continue
+        if len(sig) >= 8 and sig == prev_sig:
+            cur.append(ln)
+        else:
+            groups.append(cur)
+            cur = [ln]
+            prev_sig = sig
+    groups.append(cur)
+    out: list[str] = []
+    for g in groups:
+        if len(g) >= 3:
+            out.append(g[0])
+            out.append(f"...[折叠 {len(g) - 2} 行相似输出]...")
+            out.append(g[-1])
+        else:
+            out.extend(g)
+    return "\n".join(out)
+
+
+_SIGN_RE = re.compile(r"\d+")  # Sprint 38 (S4): 相似行结构签名 (数字归一化)
+
+
 def _trim_assistant(text: str, max_chars: int = 2500) -> str:
     """Sprint 36.4: 裁剪回灌的助手侧输出, 控制单步上下文预算.
-
-    根因 (gctf25 filtermaze hard 复盘): 上下文严重饱和时 (单步调用 ~45K tokens),
     LLM 输出塌陷为无 Action 的退化文本 → 即使 observation 已截断, 助手侧
     自身的长篇 thought (可达 2-4K 字符) 仍持续膨胀 10 轮滑动窗口.
     策略: 回灌时把助手输出截断到 max_chars, 保留头部 (推理/行动意图在前).
@@ -527,6 +573,11 @@ class ReActEngine:
         # (未执行指令) 则注入 [强制跳转] 更强阻断 (不依赖禁忌列表, 直接干预).
         self._must_action: str = ""
         self._must_ignore_steps: int = 0
+        # Sprint 38 (真实环境验证复盘): LLM 连续不可用熔断 — API 全挂时
+        # 跳过步不触发 on_step, 空转到调用器 300s 卡死判定才终止 (浪费整题时间).
+        # 连续 LLM 调用失败 ≥2 次视为"LLM 不可用"硬状态, 直接主动终止并注明原因.
+        self._llm_fail_streak = 0
+        self._llm_fail_max = 2
         self._on_coordinator = on_coordinator  # Sprint 29: 巡查日志回调
         # Sprint 33: 异步事件驱动巡查 — 发起步记录 + 指导来源步 (注入时声明分析基于哪一步)
         self._pending_patrol_step = 0
@@ -558,6 +609,25 @@ class ReActEngine:
         from ctf_agent.memory.compressor import ContextCompressor
 
         self._compressor = ContextCompressor()
+
+        # Sprint 38 (C2): 已读文件指纹 + 结论缓存 — 防止"截断重读死循环"
+        # (test20 复盘: MHK2.sage 被读 4-6 遍 / enigma.h 重读 3 次, 直接挤占上下文).
+        # - _read_files: {规范化路径: 已读摘要 (首行+行数+哈希片段)}
+        # - _verified_facts: {事实键: 值} — 已验证结论, 重算拦截
+        self._read_files: dict[str, str] = {}
+        self._verified_facts: dict[str, str] = {}
+        self._read_fingerprint_warned: bool = False  # 防重复注入提示刷屏
+        # Sprint 38 (S5): 脚本错误计数 {action+input 签名: 次数} — 同错 ≥2 次强制换法
+        self._script_err_count: dict[str, int] = {}
+        # Sprint 41 (rev-zermatt 复盘): 只读侦查命令去重缓存 —
+        # 同一 ls/cat/grep/strings/xxd 命令重复执行 → 返回缓存提示 (防"反复查看同一批文件").
+        # - _recon_cmds: {归一化命令: True} — 已执行过的只读侦查命令
+        # - _recon_cmd_warned: set[str] — 已提示过重复的命令 (每个命令只提示一次, 防刷屏)
+        self._recon_cmds: dict[str, bool] = {}
+        self._recon_cmd_warned: set[str] = set()
+        # - _script_prefix_count: ssh_python 脚本归一化前缀出现次数 — 同一脚本反复运行提示
+        self._script_prefix_count: dict[str, int] = {}
+        self._script_dup_warned: bool = False
 
     def _thinking_extra(self) -> dict[str, Any] | None:
         """Sprint 26: 按难度+题型选择 reasoning_effort, 通过 extra 传给 LLM.
@@ -857,6 +927,76 @@ class ReActEngine:
                 except Exception:
                     pass  # 进度汇报异常不影响主流程
 
+            # Sprint 38 (Phase C, P2 证据决策二叉树): 每 5 步推进证据树 —
+            # ①消费兄弟 verdict (去重采纳) ②发布本路已确认节点 ③注入当前
+            # 待验证节点任务 (问题+验证方法) 给战术层. 仅 P2 阶段且树已激活.
+            if self._coordinator is not None and getattr(
+                self._coordinator, "_evidence_tree", None
+            ) is not None:
+                try:
+                    if step_no - getattr(self, "_tree_step", -20) >= 5:
+                        self._tree_step = step_no
+                        coord = self._coordinator
+                        # ① 消费兄弟 verdict → 注入采纳提示
+                        merged = coord.consume_verdicts()
+                        if merged:
+                            lines = [
+                                "[兄弟验证采纳] 以下已验证节点结论已并入你的证据树"
+                                " (100% 确认, 可直接采用, 无需重验):"
+                            ]
+                            for v in merged[:3]:
+                                q = str(v.get("node_question") or "")[:80]
+                                a = "是" if v.get("answer") else "否"
+                                lines.append(f"  - [{a}] {q} (来自 {v.get('verified_by')})")
+                            memory.add_user_message("\n".join(lines))
+                        # ② 发布本路已确认节点
+                        coord.publish_verdicts()
+                        # ③ 注入当前待验证节点任务
+                        nxt = None
+                        try:
+                            nxt = coord._evidence_tree.next_unconfirmed()
+                        except Exception:
+                            nxt = None
+                        if nxt:
+                            node = coord._evidence_tree.nodes.get(nxt)
+                            if node is not None:
+                                vm = f"\n  验证方法: {node.verify_method}" if node.verify_method else ""
+                                exp = ""
+                                if node.expected_yes or node.expected_no:
+                                    exp = (f"\n  判定标准: 是→{node.expected_yes} | "
+                                           f"否→{node.expected_no}")
+                                memory.add_user_message(
+                                    "[证据树·待验证节点] 当前路径的下一步验证问题:\n"
+                                    f"  ❓ {node.question}{vm}{exp}\n"
+                                    "请执行该验证并回传明确结论 (是/否), 确认动作通过后"
+                                    "该节点将标记 confirmed 并参与路径选择."
+                                )
+                        # 树摘要注入 (防上下文丢树结构)
+                        summary = coord.evidence_summary()
+                        if summary:
+                            memory.add_user_message(
+                                f"[证据树状态] {summary}"
+                            )
+                except Exception:
+                    pass  # 证据树推进异常不影响主流程
+
+            # Sprint 38 (Phase D, P3 攻击链驱动): 每 5 步注入当前攻击环节指导.
+            # 攻击链激活后, 战术层按环节推进 (每环有验证断言, 失败回溯不弃链).
+            if self._coordinator is not None and getattr(
+                self._coordinator, "_attack_chain", None
+            ) is not None:
+                try:
+                    if step_no - getattr(self, "_chain_step", -20) >= 5:
+                        self._chain_step = step_no
+                        guid = self._coordinator.attack_link_guidance()
+                        if guid:
+                            memory.add_user_message(guid)
+                        csum = self._coordinator.attack_chain_summary()
+                        if csum:
+                            memory.add_user_message(f"[攻击链状态] {csum}")
+                except Exception:
+                    pass  # 攻击链推进异常不影响主流程
+
             # 刷新 system prompt：每轮重新注入最新关键事实（防丢）
             # RAG context 是静态的，但 facts 可能因 remember_fact 而新增
             if self._mid_term is not None or rag_context:
@@ -1128,42 +1268,78 @@ class ReActEngine:
             # Sprint 26: 按难度注入 reasoning_effort (thinking_mode)
             # Sprint 32.8: LLM 调用异常容错 — 中途 API 故障不能整题 0 步失败:
             #   flash 失败 → 重试 → pro 降级 → 仍失败则注入提示跳过本步继续 (不崩溃)
-            try:
-                chat_result = self.llm.chat(
-                    memory.get_messages(),
+            # Sprint 38 (test20 复盘): 单步 LLM 调用总预算 — routed 层单次 chat()
+            # 已有 120s 总预算, 但本层三级重试链最坏仍达 ~364s (120+2+120+2+120),
+            # 超过调用层"300s 无新 step 卡死判定". 此处增加 step 级总预算:
+            # 超过预算即使重试未穷尽也立即跳过本步, 保证单步不阻塞整题.
+            _LLM_STEP_BUDGET = 150.0  # 单步 LLM 调用 (含重试链) 硬总预算 (s)
+
+            def _chat_once(tier: str = "flash"):
+                # 仅 pro 降级时才传 model_tier (向后兼容: mock/无路由客户端
+                # 的 chat 签名可能不含 model_tier 参数, flash 默认不传)
+                _kw: dict = dict(
                     model=self.model,
                     temperature=self.temperature,
                     extra=self._thinking_extra(),
                 )
+                if tier == "pro":
+                    _kw["model_tier"] = "pro"
+                return self.llm.chat(
+                    memory.get_messages(),
+                    **_kw,
+                )
+
+            _llm_step_start = time.monotonic()
+            chat_result = None
+            _last_llm_err: Exception | None = None
+            try:
+                chat_result = _chat_once("flash")
             except Exception as _llm_err1:  # noqa: BLE001
-                time.sleep(2)  # 网络抖动瞬时恢复
-                try:
-                    chat_result = self.llm.chat(
-                        memory.get_messages(),
-                        model=self.model,
-                        temperature=self.temperature,
-                        extra=self._thinking_extra(),
-                    )
-                except Exception as _llm_err2:  # noqa: BLE001
-                    time.sleep(2)
+                _last_llm_err = _llm_err1
+                if time.monotonic() - _llm_step_start < _LLM_STEP_BUDGET:
+                    time.sleep(2)  # 网络抖动瞬时恢复
                     try:
-                        # 第 3 次: 降级 pro 重试 (flash 全线故障时的最后手段)
-                        chat_result = self.llm.chat(
-                            memory.get_messages(),
-                            model=self.model,
-                            temperature=self.temperature,
-                            extra=self._thinking_extra(),
-                            model_tier="pro",
-                        )
-                    except Exception as _llm_err3:  # noqa: BLE001
-                        # 全部失败: 注入提示并跳过本步, 保持循环继续 (breaker 熔断兜底)
-                        memory.add_user_message(
-                            f"⚠️ LLM API 暂时不可用 (多次重试失败: "
-                            f"{type(_llm_err3).__name__}: {_llm_err3}).\n"
-                            "请保持当前解题思路, 下一步继续分析, 不要重复之前的动作."
-                        )
-                        step_no += 1
-                        continue
+                        chat_result = _chat_once("flash")
+                    except Exception as _llm_err2:  # noqa: BLE001
+                        _last_llm_err = _llm_err2
+                        if time.monotonic() - _llm_step_start < _LLM_STEP_BUDGET:
+                            time.sleep(2)
+                            try:
+                                # 第 3 次: 降级 pro 重试 (flash 全线故障时的最后手段)
+                                chat_result = _chat_once("pro")
+                            except Exception as _llm_err3:  # noqa: BLE001
+                                _last_llm_err = _llm_err3
+            if chat_result is None:
+                # 全部失败或预算耗尽: 注入提示并跳过本步, 保持循环继续 (breaker 熔断兜底)
+                # Sprint 38 (验证复盘): 连续失败计数 — LLM API 全挂时跳过步不产生
+                # step 输出, 会空转到调用器 300s 卡死判定. 连续 ≥_llm_fail_max 次
+                # 视为 LLM 硬不可用, 主动终止 (早失败优于空转).
+                self._llm_fail_streak += 1
+                if self._llm_fail_streak >= self._llm_fail_max:
+                    return ReActResult(
+                        success=False,
+                        final_answer="",
+                        fail_reason=(
+                            f"LLM API 连续 {self._llm_fail_streak} 次调用失败"
+                            f" ({type(_last_llm_err).__name__ if _last_llm_err else 'timeout'}: "
+                            f"{str(_last_llm_err)[:120]}), 判定不可用, 主动终止"
+                        ),
+                        steps=steps,
+                        total_tokens=total_tokens,
+                        raw_outputs=raw_outputs,
+                        started_at=started_at,
+                        ended_at=time.monotonic(),
+                        task=task,
+                    )
+                memory.add_user_message(
+                    f"⚠️ LLM API 暂时不可用 (多次重试失败/超预算: "
+                    f"{type(_last_llm_err).__name__ if _last_llm_err else 'timeout'}: "
+                    f"{_last_llm_err}).\n"
+                    "请保持当前解题思路, 下一步继续分析, 不要重复之前的动作."
+                )
+                step_no += 1
+                continue
+            self._llm_fail_streak = 0  # LLM 调用成功, 重置连续失败计数
             total_tokens += chat_result.usage.total_tokens
             # 熔断器记录本次 LLM 调用（用于成本熔断，README §3.5.2 第 4 维）
             self.breaker.record_llm_call(
@@ -1501,6 +1677,40 @@ class ReActEngine:
                             memory.add_user_message(f"[战略层] {switch_dir}")
                 except Exception:
                     pass  # 死路检测异常不影响主流程
+
+            # Sprint 38 (S5): 脚本鲁棒性 — Python 语法错误/运行时错误检测并注入修复提示.
+            # test20 复盘: agent 反复犯同一脚本 bug (f-string 引号未闭合/生成器括号/
+            # struct 越界), 每次报错不修根因. 这里: ①检测 SyntaxError 注入疑似行修复提示
+            # ②同一 action_input 同错 ≥2 次 → 强制改用 ssh_python 写文件方式 (而非 -c 内联).
+            if observation.is_error and parsed.action in ("ssh_exec", "docker_exec"):
+                try:
+                    _obs_lower = (observation.output or "").lower()
+                    _is_py_err = ("syntaxerror" in _obs_lower or "traceback" in _obs_lower
+                                  or "typeerror" in _obs_lower or "valueerror" in _obs_lower
+                                  or "indentationerror" in _obs_lower)
+                    if _is_py_err:
+                        _sig = f"{parsed.action}:{parsed.action_input[:80]}"
+                        self._script_err_count[_sig] = self._script_err_count.get(_sig, 0) + 1
+                        err_n = self._script_err_count[_sig]
+                        if err_n >= 2:
+                            memory.add_user_message(
+                                f"⚠️ 同一脚本错误已出现 {err_n} 次 ({_sig[:60]}...)。\n"
+                                f"请**更换实现方式**: 用 ssh_python 把脚本写入文件再执行 "
+                                f"(而非在 ssh_exec 里内联 python -c), 可避免 shell 转义/引号嵌套问题。\n"
+                                f"同时先检查: ①引号是否闭合 ②生成器表达式是否加括号 "
+                                f"③struct 解包字节数是否匹配 ④变量名是否拼写正确。"
+                            )
+                        else:
+                            memory.add_user_message(
+                                f"⚠️ 检测到 Python 脚本错误 (第 {err_n} 次)。\n"
+                                f"请先定位错误行修复, 不要直接重试同一命令:\n"
+                                f"1. 查看报错行号与类型 (SyntaxError/TypeError 等)\n"
+                                f"2. 检查引号闭合/括号匹配/缩进\n"
+                                f"3. 修复后重试, 若 2 次仍失败改用 ssh_python 写文件方式"
+                            )
+                except Exception:
+                    pass  # 脚本错误检测失败不影响主流程
+
             step = ReActStep(
                 step_no=step_no,
                 thought=parsed.thought,
@@ -1512,6 +1722,15 @@ class ReActEngine:
             )
             steps.append(step)
             self._notify(step)
+
+            # Sprint 38 (C2): 记录已读文件指纹 — 纯 `cat <文件>` 成功读取后登记,
+            # 供后续 _check_re_read 拦截全文重读 (防截断重读死循环).
+            # 仅在非错误且 ssh_exec/docker_exec 时登记; 摘要 = 首行 + 行数 (轻量).
+            if not observation.is_error and parsed.action in ("ssh_exec", "docker_exec"):
+                try:
+                    self._record_read_file(parsed.action_input, observation.output or "")
+                except Exception:
+                    pass  # 指纹记录失败不影响主流程
 
             # Sprint 17: range_control verify 成功后立即 Final Answer (避免 Cache_Footprint 10min 问题)
             # 当 observation 包含 "Flag verified" / "verify: True" 等成功标志时, 自动终止
@@ -1761,6 +1980,26 @@ class ReActEngine:
 
     def _invoke_tool(self, action: str, action_input: str) -> ToolResult:
         """调用工具并返回 ToolResult."""
+        # Sprint 38 (C2): 已读文件指纹 — 拦截"纯 cat 全文重读" (防截断重读死循环).
+        # 仅拦截 ssh_exec/docker_exec 中纯粹的 `cat <文件>` 单命令全文读取;
+        # 带 grep/sed/head/tail/管道/参数的文件操作视为"精确取片段", 不拦截.
+        if action in ("ssh_exec", "docker_exec") and self._read_files:
+            reread_hint = self._check_re_read(action_input)
+            if reread_hint:
+                return ToolResult(
+                    output=reread_hint,
+                    is_error=False,  # 非错误: 正常提示, 不触发死路检测
+                )
+        # Sprint 41 (rev-zermatt 复盘): 只读侦查命令去重 — 同一 ls/cat/grep/strings/xxd
+        # 重复执行返回缓存提示 (防"反复查看同一批文件"空转挤占上下文).
+        if action in ("ssh_exec", "docker_exec"):
+            recon_hint = self._check_recon_cmd_repeat(action_input)
+            if recon_hint:
+                return ToolResult(output=recon_hint, is_error=False)
+        # Sprint 41: 同一 ssh_python 脚本反复运行提示 (防微调重跑同一段脚本空转).
+        script_hint = self._check_script_dup(action, action_input)
+        if script_hint:
+            return ToolResult(output=script_hint, is_error=False)
         tool = self.tools.get(action)
         if tool is None:
             available = ", ".join(sorted(self.tools.keys()))
@@ -1768,7 +2007,182 @@ class ReActEngine:
                 output=f"ERROR: 未知工具 '{action}'。可用工具: {available}",
                 is_error=True,
             )
-        return tool(action_input)
+        result = tool(action_input)
+        # Sprint 41: 只读侦查命令**成功执行后**登记指纹 (失败不登记, 重试不被误提示).
+        if not result.is_error and action in ("ssh_exec", "docker_exec"):
+            try:
+                self._record_recon_cmd(action_input)
+            except Exception:
+                pass  # 登记失败不影响主流程
+        return result
+
+    def _check_re_read(self, action_input: str) -> str:
+        """Sprint 38 (C2): 检测纯 `cat <文件>` 全文重读, 返回拦截提示 (空串=不拦截).
+
+        判定规则 (保守, 避免误伤):
+        - 仅匹配命令形如 `cat <单个文件>` / `cat '<文件>'` (无管道/重定向/多个参数)
+        - 文件路径必须已在本路 _read_files 指纹库中
+        - 返回提示: 告知已读内容摘要 (首行+行数), 建议改用 sed/head 精确取片段
+        """
+        import re as _re
+
+        text = (action_input or "").strip()
+        # 快速排除: 含管道/重定向/&&/; 或非 ssh 命令 (cd 前缀除外)
+        if not text:
+            return ""
+        if _re.search(r"[|>;&]", text):
+            return ""
+        # 允许前缀 cd xxx && 形式 → 直接取最后一段命令
+        cmd = text.split("&&")[-1].strip()
+        m = _re.match(r"^cat\s+([^\s]+)\s*$", cmd)
+        if not m:
+            return ""
+        path = m.group(1).strip().strip("'\"")
+        if not path.startswith(("/", "./", "../", "~")):
+            return ""
+        if path not in self._read_files:
+            return ""
+        summary = self._read_files[path]
+        if self._read_fingerprint_warned:
+            return ""  # 已提示过 → 不重复拦截 (放行一次, 避免过度干扰)
+        self._read_fingerprint_warned = True
+        return (
+            f"[已读提示] 文件 {path} 你之前已完整读过一次 (摘要: {summary})。\n"
+            f"重复全文 cat 会挤占上下文。如需要查看特定内容, 请用 "
+            f"`sed -n '开始,结束p' {path}` 或 `grep -n '关键词' {path}` 精确取片段;\n"
+            f"如需要整文件行数概览, 用 `wc -l {path}`。"
+        )
+
+    def _check_recon_cmd_repeat(self, action_input: str) -> str:
+        """Sprint 41 (rev-zermatt 复盘): 只读侦查命令去重缓存 — 返回拦截提示 (空串=放行).
+
+        根因: flash 组三路反复执行 ls/cat/grep/strings/xxd 同一批只读命令
+        (aggressive 36 步全 ssh_exec, 同一 demangled 脚本调试 6 次), 空转挤占上下文.
+        与 _check_re_read 互补: 后者只拦"纯 cat 单文件", 这里拦所有只读侦查命令的重复.
+
+        规则 (保守, 防误伤):
+        - 仅拦截纯只读侦查命令 (ls/cat/grep/strings/xxd/head/tail/file/wc/which/find/stat)
+        - 同一归一化命令在本路已执行过 → 返回提示 (提示一次后放行, 避免过度干扰)
+        - 带管道/重定向/脚本 heredoc 的复杂命令不拦截 (可能是在做不同加工)
+        """
+        import re as _re
+
+        cmd = self._extract_cmd(action_input)
+        if not cmd:
+            return ""
+        # 允许 cd xxx && 前缀 → 取最后一段命令 (与 _check_re_read 同规则)
+        cmd = cmd.split("&&")[-1].strip()
+        # 含管道/重定向/分号/换行/后台符的复杂命令不拦截 (可能在做不同加工)
+        if _re.search(r"[|>;\n]", cmd):
+            return ""
+        m = _re.match(r"^(ls|cat|grep|strings|xxd|head|tail|file|wc|which|find|stat)\b(.*)$", cmd)
+        if not m:
+            return ""
+        # 归一化: 折叠空白 + 去除明显无意义尾参数差异 (--color 等)
+        norm = _re.sub(r"\s+", " ", m.group(0)).strip()
+        norm = _re.sub(r"\s*(--color\S*|-l\s+)$", "", norm).strip()
+        if not norm:
+            return ""
+        if norm in self._recon_cmds:
+            if norm in self._recon_cmd_warned:
+                return ""  # 该命令已提示过 → 放行, 避免过度干扰
+            self._recon_cmd_warned.add(norm)
+            return (
+                f"[重复命令提示] 命令 `{norm[:80]}` 你之前已执行过 (结果未变)。\n"
+                f"不要重复运行同一只读命令挤占上下文: 如需新信息, 请基于已读内容 "
+                f"进一步用 grep/sed/管道加工、写脚本解析, 或直接进入下一步攻击/提交。"
+            )
+        return ""
+
+    def _extract_cmd(self, action_input: str) -> str:
+        """从工具 action_input (JSON) 提取纯命令字符串; 非 JSON 时原样返回."""
+        import re as _re
+
+        text = (action_input or "").strip()
+        if not text:
+            return ""
+        # action_input 是 JSON {"command": "...", "timeout": "..."} → 提取 command
+        if text.lstrip().startswith("{"):
+            try:
+                import json as _json
+                d = _json.loads(text)
+                cmd = str(d.get("command") or d.get("url") or "").strip()
+                return cmd
+            except Exception:
+                pass
+        return text
+
+    def _record_recon_cmd(self, action_input: str) -> None:
+        """Sprint 41: 成功执行的只读侦查命令登记指纹 (与 _check_recon_cmd_repeat 同规则)."""
+        import re as _re
+
+        cmd = self._extract_cmd(action_input)
+        if not cmd:
+            return
+        cmd = cmd.split("&&")[-1].strip()  # 允许 cd xxx && 前缀
+        if _re.search(r"[|>;\n]", cmd):
+            return
+        m = _re.match(r"^(ls|cat|grep|strings|xxd|head|tail|file|wc|which|find|stat)\b(.*)$", cmd)
+        if not m:
+            return
+        norm = _re.sub(r"\s+", " ", m.group(0)).strip()
+        norm = _re.sub(r"\s*(--color\S*|-l\s+)$", "", norm).strip()
+        if norm:
+            self._recon_cmds[norm] = True
+
+    def _check_script_dup(self, action: str, action_input: str) -> str:
+        """Sprint 41 (rev-zermatt 复盘): 同一 ssh_python 脚本反复运行提示 (空串=放行).
+
+        根因: aggressive 同一 zermatt_demangled 读取脚本调试 12 次 / zermatt.lua 读取 5 次,
+        innovative zermatt.lua 脚本 4 次 — 脚本主体不变只微调, 反复消耗步骤与上下文.
+        规则: ssh_python/docker_python 脚本前 60 字符归一化后, 同前缀出现 >=3 次 → 提示.
+        """
+        if action not in ("ssh_python", "docker_python"):
+            return ""
+        import re as _re
+
+        script = (action_input or "").strip()
+        if not script:
+            return ""
+        # 归一化: 去空白 + 去数值差异 (文件偏移/长度数字)
+        norm = _re.sub(r"\s+", " ", script)[:60]
+        norm = _re.sub(r"\b\d+\b", "N", norm)
+        if len(norm) < 20:  # 过短不判定
+            return ""
+        self._script_prefix_count[norm] = self._script_prefix_count.get(norm, 0) + 1
+        if self._script_prefix_count[norm] >= 3 and not self._script_dup_warned:
+            self._script_dup_warned = True
+            return (
+                f"[脚本重复提示] 你已多次运行几乎相同的脚本 (前 60 字符归一化后重复 "
+                f"{self._script_prefix_count[norm]} 次: `{norm}`)。\n"
+                f"反复运行同主体脚本 = 在相同数据上空转。请先明确脚本输出证明了什么, "
+                f"再写**新的**、针对下一步目标的脚本 (解析/模拟/攻击), 而不是微调重跑同一段。"
+            )
+        return ""
+
+    def _record_read_file(self, action_input: str, observation: str) -> None:
+        """Sprint 38 (C2): 登记纯 `cat <文件>` 的成功读取指纹 (摘要=首行+行数)."""
+        import re as _re
+
+        text = (action_input or "").strip()
+        if not text or _re.search(r"[|>;&]", text):
+            return  # 仅登记纯净 cat 单命令
+        cmd = text.split("&&")[-1].strip()
+        m = _re.match(r"^cat\s+([^\s]+)\s*$", cmd)
+        if not m:
+            return
+        path = m.group(1).strip().strip("'\"")
+        if not path.startswith(("/", "./", "../", "~")):
+            return
+        if path in self._read_files:
+            return  # 已登记过
+        # 轻量摘要: 首行(截断) + 行数
+        lines = (observation or "").splitlines()
+        first = (lines[0] if lines else "").strip()[:80]
+        summary = f"{len(lines)} 行"
+        if first:
+            summary += f", 首行: {first}"
+        self._read_files[path] = summary
 
     def _mem_round(
         self,

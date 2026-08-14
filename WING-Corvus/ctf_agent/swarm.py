@@ -173,7 +173,9 @@ class SwarmCoordinator:
             except Exception:
                 kb = None
             cmdr = Commander(
-                llm=RoutedLLMClient(settings=get_settings()),
+                # Sprint 39: 总指挥层独立 LLM (layer=commander) — 可经
+                # LAYER_LLM_MAP 或 --layer-llm commander=provider[:model] 指定.
+                llm=RoutedLLMClient(settings=get_settings(), layer="commander"),
                 title=str(task.get("title") or ""),
                 task_desc=str(task.get("desc") or ""),
                 challenge_type=str(task.get("type") or ""),
@@ -190,11 +192,13 @@ class SwarmCoordinator:
             # 初始任务契约 → 每条 post_directive (战略层首步 check 读取, 统一走总线协议)
             # Sprint 36.2: 领题即 P1 侦查阶段 (阶段信息随指令下发给战略层)
             # Sprint 36.5.2: 附带任务禁忌 (P1 阶段约束, 严格限定子解题器方向)
+            # Sprint 38 (Phase B): 附带产出物清单 (deliverables) — 侦查任务验收标准
             for a in assignments:
                 bus.post_directive(
                     agent_id=a.style, task_id=bus_key, content=a.task,
                     task_no=a.task_no, priority="SHOULD", reason="领题分工",
                     phase="P1", forbidden=getattr(a, "forbidden", None) or [],
+                    deliverables=getattr(a, "deliverables", None) or [],
                 )
             # Sprint 36: 领题分工日志 → 调用方 (NSS Runner 日志: 命令行 + 文件)
             if on_commander:
@@ -222,7 +226,7 @@ class SwarmCoordinator:
     def _commander_loop(self, cmdr, bus, bus_key: str, stop_event, on_commander=None) -> None:
         """总指挥后台轮询: 消费战略层汇报 → LLM 分析 → 下发 directive (异步事件驱动).
 
-        Sprint 36.5 (2026-08-06, 用户反馈"总指挥除分工外很少日志"):
+        Sprint 36.5 (2026-08-06, 运行反馈"总指挥除分工外很少日志"):
         - 轮询间隔 5s → 1.5s: 汇报→阶段切换→指令下发的实时性 (状态切换机实时切换)
         - 每 15s 状态心跳 (阶段/汇报跟踪/指令数): 静默轮询也可见总指挥在工作
         - 异常不再静默吞掉: 记录 ERROR 日志 (异常不影响主流程, 但必须可见可定位)
@@ -433,6 +437,13 @@ class SwarmCoordinator:
             if style:
                 t["style"] = style
             t["challenge_id"] = f"{base_id}:{style or 'single'}"
+            # Sprint 38 (真实环境验证复盘): 总线键必须与总指挥一致 —
+            # 每路 challenge_id 被改造成 "{base}:{style}" 后, 若沿用 challenge_id 作
+            # 总线键, agent 与总指挥将读写不同文件 (Windows 文件名含冒号还会直接
+            # 写失败), 导致"总指挥收不到 P1 汇报 / agent 读不到指令" (verify 日志:
+            # 三路积极侦查但总指挥恒为"recon: 未汇报", P1 被 90s 超时强制推进).
+            # 显式注入 bus_challenge_id=base_id, 同题 agent 与总指挥共享同一总线.
+            t["bus_challenge_id"] = base_id
             tf = self.workdir / f"{base_id}_{style or 'single'}.json"
             tf.write_text(json.dumps(t, ensure_ascii=False, indent=2), encoding="utf-8")
 

@@ -14,7 +14,6 @@
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 
 from ctf_agent.ssh import SSHClient
@@ -105,7 +104,7 @@ class ExifToolTool(Tool):
 
         output = r.stdout or ""
         if not output.strip():
-            return f"exiftool 成功,但无元数据. 文件可能无 EXIF 或已剥离."
+            return "exiftool 成功,但无元数据. 文件可能无 EXIF 或已剥离."
 
         # 关键字段高亮: GPS/坐标/相机
         highlights: list[str] = []

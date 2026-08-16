@@ -191,10 +191,10 @@ class OcrTool(Tool):
 
         if not actual:
             return (
-                f"OCR 提取出 0 字符. 文件可能没有可见文字 (岩画/纯色块).\n"
-                f"[NO_TEXT_DETECTED] Sprint 13 P0: 图片无文字, 不要拿 OCR 输出做 web_search query.\n"
-                f"提示: 换 lang (eng+rus+chi_sim 组合), 或换 psm (11=sparse text), "
-                f"或用 LLM 知识推理 (OSINT 抽象图用 osm_geocode 拿坐标)."
+                "OCR 提取出 0 字符. 文件可能没有可见文字 (岩画/纯色块).\n"
+                "[NO_TEXT_DETECTED] Sprint 13 P0: 图片无文字, 不要拿 OCR 输出做 web_search query.\n"
+                "提示: 换 lang (eng+rus+chi_sim 组合), 或换 psm (11=sparse text), "
+                "或用 LLM 知识推理 (OSINT 抽象图用 osm_geocode 拿坐标)."
             )
 
         # Sprint 13 P0: 检测假阳性 (如 "Estimating resolution as 381" 是 tesseract 内部状态, 不是真实文字)

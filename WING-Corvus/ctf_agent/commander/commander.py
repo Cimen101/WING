@@ -274,7 +274,7 @@ class Commander:
         # 三路 agent 未开始侦查就被推入 P2 (verify 日志: 分工与 P2 指令同秒发出).
         self._phase_enter_ts = time.time()
         self._context.append(
-            f"[领题] 分工: " + "; ".join(
+            "[领题] 分工: " + "; ".join(
                 f"{a.style}→任务{a.task_no}: {a.task[:80]}" for a in assignments
             )
         )
@@ -1240,7 +1240,7 @@ class Commander:
                 if cleaned:
                     self._alt_directions = cleaned
                     self._context.append(
-                        f"[备选方向] " + "; ".join(d[:40] for d in cleaned))
+                        "[备选方向] " + "; ".join(d[:40] for d in cleaned))
         except Exception:  # noqa: BLE001 - 方向解析失败不阻断
             pass
         self._trim_context()
@@ -1329,7 +1329,7 @@ class Commander:
 
         silent = bool(obj.get("silent", False))
         if silent:
-            self._context.append(f"[分析] 静默 (方向正确, 无重大收获), 不下发指令")
+            self._context.append("[分析] 静默 (方向正确, 无重大收获), 不下发指令")
             self._trim_context()
             return directives
 

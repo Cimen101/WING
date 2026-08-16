@@ -24,7 +24,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,7 +32,6 @@ from ctf_agent.agent import ReActEngine, ReActResult, ReActStep
 from ctf_agent.config import Settings, get_settings
 from ctf_agent.llm import LLMClient
 from ctf_agent.tools import default_tools
-from ctf_agent.tools.base import Tool
 
 
 # ============ 干预中心（对话纠偏核心） ============

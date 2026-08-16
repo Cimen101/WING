@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import re
-import struct
 from typing import Any
 
 from ctf_agent.ssh import SSHClient

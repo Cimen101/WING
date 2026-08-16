@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import secrets
 import string
-from pathlib import Path
 
 FLAG_PREFIX = "athena{"
 FLAG_SUFFIX = "}"

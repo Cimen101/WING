@@ -192,7 +192,7 @@ def _extract_pattern_features(task: str, result: ReActResult) -> list[str]:
 
     # 题目类型
     if result.steps:
-        features.add(f"category_hint")
+        features.add("category_hint")
 
     return sorted(features)[:15]  # 限制数量, 避免过长
 
@@ -204,7 +204,6 @@ def _template_body(result: ReActResult, task: str) -> str:
     lines = []
 
     # 识别: 触发特征
-    ctype = ""
     if task:
         # 从 task 中提取关键特征 (文件类型、关键词等)
         task_sanitized = _sanitize_text(task[:200])

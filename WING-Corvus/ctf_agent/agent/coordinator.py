@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import re
 import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1397,7 +1396,6 @@ class Coordinator:
 
         for forbidden in forbidden_snapshot:
             # 中文特殊处理: 先按中文标点和空格分割
-            import re
             tokens = [t.strip() for t in re.split(r'[\s，,。、；;：:！!？?《》"\']+', forbidden.lower()) if t.strip()]
             all_keywords = [w for w in tokens if len(w) > 1]
 
@@ -2876,7 +2874,6 @@ class Coordinator:
     def _try_recover_provider(self) -> None:
         """Sprint 37: LLM provider 异常时尝试恢复探测."""
         try:
-            from ctf_agent.llm.routed import RoutedLLMClient
             if hasattr(self, '_llm_client') and self._llm_client is not None:
                 client = self._llm_client
                 # 若已有 smoke_test 方法, 调用轻量级恢复探测

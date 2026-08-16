@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 # 可疑外部题解渠道 (域名/主机名关键词)

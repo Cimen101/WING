@@ -29,8 +29,6 @@ d = abs(LLL_B[0][3]) // W
 """
 from __future__ import annotations
 
-import math
-import re
 from typing import Any, Optional
 
 from ctf_agent.ssh import SSHClient

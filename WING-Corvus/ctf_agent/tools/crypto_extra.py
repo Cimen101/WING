@@ -18,7 +18,6 @@ import binascii
 import math
 import os
 import re
-import struct
 from collections import Counter
 from typing import Any
 
@@ -279,8 +278,6 @@ def _detect_key_length(ciphertexts: list[bytes], max_len: int = 64) -> int | Non
     best_len = 1
     best_score = 0.0
     for key_len in range(1, min(max_len + 1, min_len)):
-        # 把密文拼起来，每隔 key_len 取一个字节算重合指数
-        concat = b"".join(ciphertexts)
         # 取第一个密文的前 min_len 字节，按 key_len 分组算重合指数
         sample = ciphertexts[0][:min_len]
         if len(sample) < key_len * 2:
@@ -340,8 +337,6 @@ def _png_frame_xor_analysis(file_path: str) -> str:
     report_parts.append(f"发现 {len(frames)} 个 PNG 帧")
 
     # 帧间 XOR 叠加（去除 PNG 头）
-    ihdr_magic = b"IHDR"  # PNG IHDR 块标识
-    min_len = min(len(f) for f in frames)
     # 截去 PNG 文件头（前 8 字节 magic + IHDR 块）
     header_len = 8  # PNG magic
     # 跳过各帧头部，从图像数据开始 XOR
@@ -377,7 +372,7 @@ def _png_frame_xor_analysis(file_path: str) -> str:
         )
         # 检测是否有明显的 PNG 结构残留
         if xored[:4] == b"\x89PNG" or b"PNG" in xored[:64]:
-            report_parts.append(f"  ⚠ 发现 PNG 结构残留！可能存在帧间 XOR 恢复可能")
+            report_parts.append("  ⚠ 发现 PNG 结构残留！可能存在帧间 XOR 恢复可能")
 
     return "\n".join(report_parts)
 
@@ -1052,7 +1047,7 @@ def _hash_length_extension_attack(
 ) -> str:
     """构造哈希长度扩展攻击的 payload（仅辅助分析，不实际执行攻击）。"""
     parts: list[str] = []
-    parts.append(f"[辅助分析] 哈希长度扩展攻击参数:")
+    parts.append("[辅助分析] 哈希长度扩展攻击参数:")
     parts.append(f"  类型: {hash_type}")
     parts.append(f"  已知哈希: {known_hash}")
     parts.append(f"  已知数据: {known_data[:50]}...")
@@ -1061,15 +1056,13 @@ def _hash_length_extension_attack(
     # 计算填充后的数据长度
     if hash_type.upper() in ("MD5",):
         # MD5 长度扩展
-        known_len = len(known_data.encode("utf-8"))
         padded = _md5_pad(known_data.encode("utf-8"))
         total_len = len(padded) + len(append_data)
         parts.append(f"  已知数据填充后长度: {len(padded)} 字节")
         parts.append(f"  攻击后总长度: {total_len} 字节")
         parts.append(f"  构造的 payload: {padded.hex()[:64]}... + {append_data}")
-        parts.append(f"  注意：实际攻击需在容器中执行（ssh_python）")
+        parts.append("  注意：实际攻击需在容器中执行（ssh_python）")
     elif hash_type.upper() in ("SHA-1", "SHA-256", "SHA-512"):
-        known_len = len(known_data.encode("utf-8"))
         padded = _sha1_pad(known_data.encode("utf-8"))
         total_len = len(padded) + len(append_data)
         parts.append(f"  已知数据填充后长度: {len(padded)} 字节")
@@ -1148,7 +1141,7 @@ class HashCollisionTool(Tool):
             if hash_type:
                 report.append(f"\n[1] 检测到哈希函数: {hash_type}")
             else:
-                report.append(f"\n[1] 未识别到标准哈希函数，将进行通用分析")
+                report.append("\n[1] 未识别到标准哈希函数，将进行通用分析")
 
         if hash_value:
             hlen = len(hash_value.replace("0x", "").replace(" ", "").strip())
@@ -1219,7 +1212,7 @@ class HashCollisionTool(Tool):
                 dlen = int(output_match.group(1))
                 report.append(f"  - 输出长度: {dlen} 位（{dlen // 2} hex 字符）")
                 if dlen < 160:
-                    report.append(f"  ⚠ 输出长度偏短（< 160 位），碰撞攻击可行性较高")
+                    report.append("  ⚠ 输出长度偏短（< 160 位），碰撞攻击可行性较高")
 
         details = {
             "success": True,
@@ -1380,8 +1373,6 @@ def _estimate_isd_complexity(n: int, k: int, t: int) -> float:
 def _analyze_key_structure(params: dict[str, Any]) -> list[str]:
     """分析密钥结构弱点。"""
     findings: list[str] = []
-    n = params.get("n")
-    k = params.get("k")
 
     if params.get("public_key_found"):
         pk_rows = params.get("pk_rows")

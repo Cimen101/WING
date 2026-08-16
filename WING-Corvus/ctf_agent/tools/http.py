@@ -9,7 +9,6 @@ GET aHEAD 类题目需要 HEAD 方法读取响应头，故本工具始终返回 
 
 from __future__ import annotations
 
-import json as _json
 from typing import Any
 
 import httpx

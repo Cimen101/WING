@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import base64
 import os
-from typing import Any, Optional
+from typing import Any
 
 from ctf_agent.ssh import SSHClient
 from ctf_agent.tools.base import Tool
@@ -364,9 +364,6 @@ class VisionAnalyzeTool(Tool):
         raw = (r.stdout or "").strip()
         stderr = (r.stderr or "").strip()
 
-        # 合并 stdout 和 stderr 用于诊断
-        combined_output = f"{raw}\n{stderr}".strip()
-
         if not raw:
             diag_info = ""
             if stderr:
@@ -374,9 +371,9 @@ class VisionAnalyzeTool(Tool):
                 net_lines = [l for l in stderr.split('\n') if '[NET]' in l or '[VISION]' in l]
                 err_lines = [l for l in stderr.split('\n') if 'ERROR' in l or '错误' in l]
                 if net_lines:
-                    diag_info = f"\n\n[网络诊断]:\n" + '\n'.join(net_lines[-5:])
+                    diag_info = "\n\n[网络诊断]:\n" + '\n'.join(net_lines[-5:])
                 if err_lines:
-                    diag_info += f"\n\n[错误详情]:\n" + '\n'.join(err_lines[-3:])
+                    diag_info += "\n\n[错误详情]:\n" + '\n'.join(err_lines[-3:])
             return (
                 f"vision_analyze 无输出.{diag_info}\n"
                 f"可能原因: Kali 网络无法访问 MIMO API, 或 PIL/ffmpeg 未安装.\n"
@@ -389,12 +386,12 @@ class VisionAnalyzeTool(Tool):
             if stderr:
                 net_lines = [l for l in stderr.split('\n') if '[NET]' in l or '[VISION]' in l]
                 if net_lines:
-                    diag_info = f"\n\n[网络诊断]:\n" + '\n'.join(net_lines[-5:])
+                    diag_info = "\n\n[网络诊断]:\n" + '\n'.join(net_lines[-5:])
             return f"vision_analyze 调用失败:\n{raw}{diag_info}\n\n建议: 检查 Kali 网络是否可访问 token-plan-cn.xiaomimimo.com, 以及 ffmpeg 是否已安装 (视频/音频需要)"
 
         # 成功: 返回模型回答
         result_lines = [
-            f"=== MIMO-2.5 全模态识别结果 ===",
+            "=== MIMO-2.5 全模态识别结果 ===",
             f"文件: {file_path}",
             f"问题: {question[:200]}",
             "",

@@ -21,9 +21,6 @@
 """
 from __future__ import annotations
 
-import os
-import re
-import tempfile
 from typing import Any, Optional
 
 from ctf_agent.ssh import SSHClient

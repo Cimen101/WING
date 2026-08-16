@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from typing import Any, Optional
 
 from ctf_agent.ssh import SSHClient

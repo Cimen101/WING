@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 # S14: 消除 chromadb telemetry 噪音. chromadb 0.5.18 的 Posthog._direct_capture

@@ -127,7 +127,7 @@ class AutoDecodeTool(Tool):
 
         if not results:
             return f"未能识别编码格式或解码失败. 原始输入: {text}"
-        return f"自动解码结果:\n" + "\n".join(results)
+        return "自动解码结果:\n" + "\n".join(results)
 
 
 class UrlPartialEncodeTool(Tool):
@@ -285,8 +285,8 @@ class PhpFilterChainTool(Tool):
                 # 通过多次转换可以生成任意字节
                 # 简化: 使用已知模式
                 conversions[i] = (
-                    f"convert.iconv.UTF8.CSISO2022KR|convert.iconv.ISO2022KR.UTF16"
-                    f"|convert.iconv.UCS-2LE.UCS-2BE|convert.iconv.UTF16.UTF8"
+                    "convert.iconv.UTF8.CSISO2022KR|convert.iconv.ISO2022KR.UTF16"
+                    "|convert.iconv.UCS-2LE.UCS-2BE|convert.iconv.UTF16.UTF8"
                 )
 
         cls._CHAIN_MAP = conversions

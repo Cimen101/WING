@@ -28,7 +28,7 @@ import math
 import re
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 # ============ 结果数据结构 ============
@@ -156,7 +156,7 @@ class BinaryAnalysisResult:
     def summary(self) -> str:
         """生成适合 LLM 阅读的简短摘要."""
         lines = [
-            f"=== Binary Analysis Summary ===",
+            "=== Binary Analysis Summary ===",
             f"File: {self.file_path}",
             f"Type: {self.file_type} ({self.arch}, {self.endian}-endian)",
             f"Backend: {self.backend_used}",
@@ -1056,7 +1056,7 @@ class BinaryAnalyzer:
             # 这样真实高置信度 hint (flag 模式 0.95) 会排第一
             candidate_hints.sort(key=lambda h: -h.confidence)
             result.xor_hints = candidate_hints[:MAX_HINTS]
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - 静默失败 - XOR 增强是 best-effort
             # 静默失败 - XOR 增强是 best-effort
             return
 

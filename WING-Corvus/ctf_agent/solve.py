@@ -724,7 +724,7 @@ def _review(result: ReActResult, task: dict[str, Any], llm: Any) -> None:
         review_result = reviewer.review([("main", trajectory_text)])
 
         if review_result.fact_count == 0:
-            _log("INFO", f"复盘: 未提取到事实, 跳过")
+            _log("INFO", "复盘: 未提取到事实, 跳过")
             return
 
         _log("INFO", f"复盘: facts={review_result.fact_count} lessons={len(review_result.lessons)} "
@@ -736,7 +736,7 @@ def _review(result: ReActResult, task: dict[str, Any], llm: Any) -> None:
             if added:
                 _log("INFO", f"复盘: 入库 {len(added)} 条 skill → {added}")
         elif not review_result.no_hallucination:
-            _log("WARN", f"复盘: 检测到幻觉, skill 未入库")
+            _log("WARN", "复盘: 检测到幻觉, skill 未入库")
     except Exception as e:  # noqa: BLE001 - 复盘失败不影响主流程
         _log("WARN", f"复盘失败: {e}")
 
@@ -762,7 +762,6 @@ def _curate(result: ReActResult, task: dict[str, Any], llm: Any) -> None:
         if not steps:
             return
         # 写临时轨迹文件 (供 curator 读取)
-        ctype = str(task.get("type") or "misc").lower().strip()
         style = str(task.get("style") or "").strip()
         cid = str(task.get("challenge_id") or "auto")
         trace_dir = _Path("data/knowledge/traces")

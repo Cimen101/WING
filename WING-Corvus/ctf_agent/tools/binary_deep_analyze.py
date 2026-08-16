@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import re
-import struct
 from typing import Any
 
 from ctf_agent.ssh import SSHClient
@@ -243,7 +242,7 @@ class BinaryDeepAnalyzeTool(Tool):
 
         # 6. Try to run with pyboy if available
         r = self._ssh.exec_cmd(
-            f"python3 -c \"from pyboy import PyBoy; print('pyboy available')\" 2>/dev/null || echo 'pyboy not installed'",
+            "python3 -c \"from pyboy import PyBoy; print('pyboy available')\" 2>/dev/null || echo 'pyboy not installed'",
             timeout=5,
         )
         if r.is_success and "pyboy available" in r.stdout:

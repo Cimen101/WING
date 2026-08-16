@@ -22,9 +22,8 @@ Sprint 10 Stage 10 (M4): 演化器 (Reflector)
 from __future__ import annotations
 
 import json
-import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
 

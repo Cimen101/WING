@@ -14,7 +14,6 @@ Sprint 16 关键变化:
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from ctf_agent.tools.base import Tool
 
@@ -690,7 +689,7 @@ done
    - **② 直接 grep 提取 clues (1步)**, 不要解析 grid 结构:
      ```bash
      # exolve 格式: clues 在 exolve-across / exolve-down 中
-     grep -oP '(?:across|down)["\s:>]*\d+[.\s]*[^<"]+' puzzle.html
+     grep -oP '(?:across|down)["\\s:>]*\\d+[.\\s]*[^<"]+' puzzle.html
      # 或直接提取所有 clue 文本
      grep -iE 'clue|across|down' puzzle.html | head -50
      ```

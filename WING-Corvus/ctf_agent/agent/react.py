@@ -15,10 +15,10 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 from uuid import uuid4
 
-from ctf_agent.llm import LLMClient, Message
+from ctf_agent.llm import LLMClient
 from ctf_agent.memory import LongTermMemory, MidTermMemory, ShortTermMemory
 from ctf_agent.memory.compressor import annotate_round  # Sprint 36.4.2: 实时打标
 from ctf_agent.orchestrator import CircuitBreaker, TaskStatus
@@ -1418,7 +1418,7 @@ class ReActEngine:
                             )
                         else:
                             self._mem_round(memory, chat_result.content,
-                                f"⛔ 提交已用完, 不要再给 Final Answer! 继续调用工具分析题目, 寻找新线索."
+                                "⛔ 提交已用完, 不要再给 Final Answer! 继续调用工具分析题目, 寻找新线索."
                             )
                         consecutive_format_errors += 1
                         step_no += 1
@@ -2096,8 +2096,6 @@ class ReActEngine:
 
     def _extract_cmd(self, action_input: str) -> str:
         """从工具 action_input (JSON) 提取纯命令字符串; 非 JSON 时原样返回."""
-        import re as _re
-
         text = (action_input or "").strip()
         if not text:
             return ""
@@ -2387,7 +2385,7 @@ class ReActEngine:
             "aes-gcm", "aes_gcm", "aesgcm", "AES-GCM",
             "ChaCha20-Poly1305", "chacha20-poly1305",
             "Crypto.Cipher", "cryptography.hazmat",
-            "AES\.MODE_GCM", "MODE_GCM",
+            "AES\\.MODE_GCM", "MODE_GCM",
             "decrypt.*gcm", "gcm.*decrypt",
         )
 

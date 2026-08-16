@@ -783,7 +783,7 @@ def arbitrate_conflicts(
         return successful[0]
 
     # 按 final_answer 分组投票
-    from collections import Counter, defaultdict
+    from collections import Counter
 
     votes = Counter(r.final_answer for r in successful)
     top_answer, top_count = votes.most_common(1)[0]

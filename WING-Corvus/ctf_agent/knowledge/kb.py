@@ -272,8 +272,6 @@ class KnowledgeBase:
         arch = self._structured.get("architecture_guides.json", {})
         for gid, guide in (arch.get("guides", {}) or {}).items():
             name = str(guide.get("name", ""))
-            text = f"[{name}] {guide.get('description', '')}"
-            kw = _tokenize(name + " " + str(guide.get('description', '')))
             # 命中关键词: 题型reverse + 标题/描述含架构特征词
             arch_kw = ["gameboy", "mame", "neogeo", "multiarch", "vm", "x86", "置换", "模拟器", "game boy"]
             if ctype == "reverse" and any(a in (name + " " + str(guide.get("description", ""))).lower() for a in arch_kw):
@@ -421,7 +419,6 @@ class KnowledgeBase:
         - tactic  战术层: agents/{type}-{phase}-{style}.md + playbooks + pitfalls + patterns
         """
         parts: list[str] = []
-        used = 0
         ctype = (challenge_type or "").lower().strip()
 
         # 1. 角色指南 (按角色分流)

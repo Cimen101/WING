@@ -31,21 +31,15 @@ Crypto_Reverse 实际算法 (per main_disasm.txt):
 from __future__ import annotations
 
 import base64
-import os
-import struct
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ctf_agent.ssh import SSHClient
 from ctf_agent.tools.base import Tool
 from ctf_agent.tools.feistel_v15 import (
-    MASK32,
     block_cipher,
     block_cipher_decr,
-    expand_key,
-    mix32,
-    ror32,
 )
 
 
@@ -248,8 +242,8 @@ class FeistelDecryptTool(Tool):
 
         lines: list[str] = []
         lines.append("=== Feistel Decrypt (Sprint 15 P0) ===")
-        lines.append(f"  Algorithm: 8-round Feistel, 64-bit block, 32-bit effective key")
-        lines.append(f"  F-function: MurmurHash3 mix32 (MUL 0x5BD1E995, XOR 0xA5C3E1D7, ROL 4)")
+        lines.append("  Algorithm: 8-round Feistel, 64-bit block, 32-bit effective key")
+        lines.append("  F-function: MurmurHash3 mix32 (MUL 0x5BD1E995, XOR 0xA5C3E1D7, ROL 4)")
         lines.append(f"  Cipher ({len(enc_bytes)} bytes = 2 blocks):")
         lines.append(f"    c0 (LE): 0x{c0_int:016x}")
         lines.append(f"    c1 (LE): 0x{c1_int:016x}")
@@ -318,7 +312,7 @@ class FeistelDecryptTool(Tool):
                 lines.append(f"      flag:    {flag!r}")
                 # 验证 flag 格式
                 if "athena{" in flag and flag.endswith("}"):
-                    lines.append(f"      format:  ✅ 'athena{{...}}' format")
+                    lines.append("      format:  ✅ 'athena{...}' format")
 
         return _truncate("\n".join(lines), 4000)
 

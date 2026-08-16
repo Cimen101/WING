@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from ctf_agent.agent import ReActEngine, ReActResult
 from ctf_agent.config import Settings, get_settings
 from ctf_agent.llm import LLMClient

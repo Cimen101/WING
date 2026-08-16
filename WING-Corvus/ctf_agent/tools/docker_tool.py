@@ -633,9 +633,8 @@ def make_backend(name: str | DockerBackend | None, docker_cmd: str = "docker") -
     if name in (None, "", "cli"):
         return CliBackend(docker_cmd=docker_cmd)
     if name == "sdk":
-        try:
-            import docker  # noqa: F401   (仅探测依赖, 实例化交给 SdkBackend)
-        except ImportError:
+        import importlib.util as _util
+        if _util.find_spec("docker") is None:
             warnings.warn(
                 "docker-py 未安装 (pip install 'ctf-agent[docker]'), "
                 "DOCKER_BACKEND=sdk 回落为 cli 后端", stacklevel=2)
@@ -833,7 +832,7 @@ class DockerClient:
             setup_script_path = _script_dir / "container_setup.sh"
             
             if setup_script_path.exists():
-                print(f"[Docker] Running container setup script...")
+                print("[Docker] Running container setup script...")
                 with open(setup_script_path, "r") as f:
                     setup_content = f.read()
                 # Base64 编码后写入容器并执行
@@ -850,7 +849,7 @@ class DockerClient:
                         [self.docker_cmd, "exec", self.container_name, "bash", "-c", setup_cmd],
                         timeout=300,
                     )
-                    print(f"[Docker] Container setup completed")
+                    print("[Docker] Container setup completed")
                 except Exception as _e:
                     print(f"[Docker] Container setup exec failed (non-critical): {_e}")
         except Exception as e:

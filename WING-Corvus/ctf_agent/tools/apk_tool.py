@@ -22,7 +22,7 @@ LLM 走 5 步即可解出 flag (jadx → grep revealFlag → 写 AES 解密 → 
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ctf_agent.ssh import SSHClient
 from ctf_agent.tools.base import Tool

@@ -90,6 +90,10 @@ from ctf_agent.tools.binary_constants_tool import binary_constants_tools  # 二�
 from ctf_agent.tools.binary_deep_analyze import binary_deep_analyze_tools  # 深度逆向分析
 from ctf_agent.tools.cgb_solve import cgb_solve_tools  # CGB GameBoy 复合求解
 from ctf_agent.tools.fluffy_solve import fluffy_solve_tools  # Flutter APK 复合求解
+from ctf_agent.tools.usb_tool import usb_tools  # 2026-08: USB 流量分析 (tshark 字段空值修复)
+from ctf_agent.tools.binary_tools_extra import binary_tools_extra  # 2026-08: 逆向增强 (env_check/deobfuscate/pe_analyze)
+from ctf_agent.tools.pe_dynamic_tool import pe_dynamic_tools  # 2026-08: PE 动态模拟 (unicorn, 32位PE/运行时密文)
+from ctf_agent.tools.web_jwt_tool import WebJwtTool, web_jwt_tool  # 2026-08: WEB JWT 算法混淆攻击 (进程内, 不依赖 Kali)
 
 __all__ = [
     "Tool",
@@ -156,6 +160,8 @@ __all__ = [
     "bus_tools",  # S12: 共享发现工具
     "ShareFindingTool",
     "CheckFindingsTool",
+    "WebJwtTool",  # 2026-08: WEB JWT 算法混淆攻击
+    "web_jwt_tool",
 ]
 
 
@@ -221,6 +227,8 @@ def default_tools(
         工具列表：L1 内置工具 + HTTP + （可选）L2 SSH + （可选）L3 MCP + （可选）binary_analyzer + （可选）mem_xor_analyzer + （可选）osint_tools + （可选）apk_tools + （可选）sage_tools
     """
     tools: list[Tool] = [*builtin_tools(), http_tool()]
+    # 2026-08 (web 专项): JWT 算法混淆攻击工具 (进程内, 不依赖 Kali, 始终可用)
+    tools.append(web_jwt_tool())
     # S12: 共享发现工具 (消息总线) — 零侵入: 未传 message_bus 不注册
     if message_bus is not None:
         tools.extend(bus_tools(message_bus, agent_id or "agent"))
@@ -270,6 +278,12 @@ def default_tools(
         # Sprint 11: OSINT 工具集 (exiftool/steghide/binwalk/tshark)
         if enable_osint:
             tools.extend(osint_tools(exec_client))
+        # 2026-08: USB 流量分析 (tshark 字段空值修复, #4836 复盘)
+        tools.extend(usb_tools(exec_client))
+        # 2026-08: 逆向增强 (env_check 环境检测 / deobfuscate 花指令 / pe_analyze PE 静态分析)
+        tools.extend(binary_tools_extra(exec_client))
+        # 2026-08: PE 动态模拟 (unicorn, 32位PE/运行时密文, #4879/#4868 复盘)
+        tools.extend(pe_dynamic_tools(exec_client))
         # Sprint 12: APK 反编译工具集 (jadx/apktool)
         if enable_apk:
             tools.extend(apk_tools(exec_client))

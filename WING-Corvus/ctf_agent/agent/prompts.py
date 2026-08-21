@@ -14,6 +14,7 @@ Sprint 16 关键变化:
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from ctf_agent.tools.base import Tool
 
@@ -689,7 +690,7 @@ done
    - **② 直接 grep 提取 clues (1步)**, 不要解析 grid 结构:
      ```bash
      # exolve 格式: clues 在 exolve-across / exolve-down 中
-     grep -oP '(?:across|down)["\\s:>]*\\d+[.\\s]*[^<"]+' puzzle.html
+     grep -oP '(?:across|down)["\s:>]*\d+[.\s]*[^<"]+' puzzle.html
      # 或直接提取所有 clue 文本
      grep -iE 'clue|across|down' puzzle.html | head -50
      ```
@@ -928,7 +929,12 @@ TYPE_TOOL_CHAINS: dict[str, str] = {
     ),
     "web": (
         "web 题推荐验证方法论:\n"
-        "  - 用 curl/http_request 实测每个关键行为, 不要只看源码推断\n"
+        "  - **访问靶机 HTTP 服务必须用 `http_request` 工具** (进程内执行, 直接可达靶机 URL), "
+        "不要用 ssh_exec 里的 curl 访问靶机 (ssh_exec 在隔离容器内执行, 可能无法访问靶机地址).\n"
+        "  - **JWT 算法混淆 (RS256→HS256) 必须用 `web_jwt` 工具**: 自动获取公钥并生成伪造 admin token, "
+        "禁止手动复制公钥到脚本 (PEM 末尾换行易丢失导致 HMAC 签名不一致, 反复失败). "
+        "调用 web_jwt(url=靶机基址) 一步生成 token, 再用 http_request 带 Bearer token 访问 /flag.\n"
+        "  - 用 http_request 实测每个关键行为, 不要只看源码推断\n"
         "  - 302 跳转必须看 Location 头, 不只看响应码\n"
         "  - XSS 用无头浏览器验证 (不是用服务端 HTML 验证客户端渲染)\n"
         "  - 参数污染/原型污染考虑 __proto__ 与重复参数 (Flask/PHP 解析差异)\n"
@@ -1088,7 +1094,42 @@ def build_system_prompt(
             prompt = f"{prompt}{obs_text}"
     except Exception:  # noqa: BLE001
         pass
+    # 2026-08 复盘: 方向识别与 flag 规范 (考点误判/同质化操作/前缀错误)
+    try:
+        dir_text = _inject_direction_safety()
+        if dir_text:
+            prompt = f"{prompt}{dir_text}"
+    except Exception:  # noqa: BLE001
+        pass
     return prompt
+
+
+def _inject_direction_safety() -> str:
+    """2026-08 复盘注入: 方向识别与 flag 规范.
+
+    背景 (NSS 长跑复盘):
+    - #4827: 受题目名 "wordy" 和大量输出文本误导, 三路初期都认定 "flag 藏在输出文本
+      隐写中", 反复分析单词首字母/字符频率, 浪费近 20 步后才转向花指令去除.
+    - #4836: 先入为主当成 "USB 键盘流量", 套用常规键盘扫描码解码, 识别出 Stream Deck
+      后仍未快速切换宏按键序列分析.
+    - #4833: 将 bat2exe 自解压程序误判为加壳 PE, 反复查壳/反汇编, 没有优先做文件结构识别.
+    - 多题出现: 同一类命令 (tshark/gdb/objdump) 只换微小参数反复执行, 无新信息.
+    - #4827/#4834: 从二进制提取 GFCTF{...}/GWHT{...} 直接提交失败, 忽略 NSS 平台
+      统一前缀 NSSCTF{...}.
+    """
+    return (
+        "\n\n## 方向识别与 flag 规范 (2026-08 复盘)\n"
+        "1. **先做结构识别, 再定方向**: 拿到附件先 `file`/`binwalk`/`env_check` 确认"
+        "文件真实类型 (ELF/PE/自解压/流量包/脚本), 不要被题目名/输出文本/表层信息误导.\n"
+        "2. **警惕先入为主**: 不要套用最常见套路 (USB 流量≠键盘, 输出文本≠隐写, "
+        "PE 文件≠加壳). 识别出真实设备/结构后立即切换对应分析方法.\n"
+        "3. **同质化操作检测**: 同一类命令 (tshark/gdb/objdump/strings) 换参数反复执行 "
+        ">3 次仍无新信息 → 立即换工具或换方向, 不要继续微调参数.\n"
+        "4. **flag 前缀规范**: 本平台统一前缀为 `NSSCTF{...}`. 从二进制/解密结果提取的 "
+        "其他前缀 (GFCTF/GWHT/flag 等) 提交前必须替换为 NSSCTF 前缀.\n"
+        "5. **工具优先**: 优先使用专用工具 (usb_analyze/env_check/deobfuscate_binary/"
+        "pe_analyze/binary_analyze), 不要用通用命令 (tshark/objdump) 手工反复试错.\n"
+    )
 
 
 def build_task_prompt(task: str) -> str:
